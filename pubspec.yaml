@@ -1,0 +1,19 @@
+name: tirtc_av_kit_example
+description: Two-page playback demo for the tirtc_av_kit plugin.
+publish_to: 'none'
+version: 0.1.0-dev
+
+environment:
+  sdk: '>=3.1.0 <4.0.0'
+  flutter: '>=3.13.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  mobile_scanner: 4.0.1
+  tirtc_av_kit: 0.1.0-alpha.1
+dev_dependencies:
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

@@ -85,7 +85,7 @@ class _DemoQrScannerPageState extends State<DemoQrScannerPage> {
     final TextTheme textTheme = Theme.of(context).textTheme;
 
     return Text(
-      '将二维码完整放入方框内，系统会自动识别并填充 remote_id、token，并在提供时回填 endpoint。',
+      '将二维码完整放入方框内，系统会自动识别并填充 app_id、remote_id、token，并在提供时回填 endpoint。',
       style: (textTheme.bodyMedium ?? const TextStyle()).copyWith(
         color: ExampleTheme.textSecondary,
         height: 1.6,
@@ -188,7 +188,7 @@ class _DemoQrScannerPageState extends State<DemoQrScannerPage> {
           ),
           const SizedBox(height: 14),
           Text(
-            '使用 JSON，并至少包含 `remote_id` 和 `token`。`endpoint` 可选，提供时会一起回填配置页。',
+            '使用 JSON，并至少包含 `app_id`、`remote_id` 和 `token`。`endpoint` 可选，提供时会一起回填配置页。',
             style: (textTheme.bodyMedium ?? const TextStyle()).copyWith(
               color: ExampleTheme.textSecondary,
               height: 1.6,
@@ -204,12 +204,14 @@ class _DemoQrScannerPageState extends State<DemoQrScannerPage> {
             ),
             child: const Text(
               '{\n'
+              '  "app_id": "flutter-example-app",\n'
               '  "remote_id": "TESTTIRTC01",\n'
               '  "token": "v1.eyJzxxx",\n'
               '  "endpoint": "https://xxx.com"\n'
               '}\n\n'
               '// endpoint 也可以整个字段省略\n'
               '{\n'
+              '  "app_id": "flutter-example-app",\n'
               '  "remote_id": "TESTTIRTC01",\n'
               '  "token": "v1.eyJzxxx"\n'
               '}',
@@ -251,7 +253,7 @@ class _DemoQrScannerPageState extends State<DemoQrScannerPage> {
         ..hideCurrentSnackBar()
         ..showSnackBar(
           const SnackBar(
-            content: Text('二维码内容无效，至少需要包含 remote_id 和 token。endpoint 可选。'),
+            content: Text('二维码内容无效，至少需要包含 app_id、remote_id 和 token。endpoint 可选。'),
           ),
         );
       await Future<void>.delayed(const Duration(milliseconds: 900));

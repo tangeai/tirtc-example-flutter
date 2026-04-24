@@ -27,6 +27,7 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
   );
 
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
+  final TextEditingController _appIdController = TextEditingController();
   final TextEditingController _endpointController = TextEditingController();
   final TextEditingController _remoteIdController = TextEditingController();
   final TextEditingController _audioStreamIdController = TextEditingController();
@@ -53,6 +54,7 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _appIdController.dispose();
     _endpointController.dispose();
     _remoteIdController.dispose();
     _audioStreamIdController.dispose();
@@ -113,6 +115,8 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.stretch,
                                 children: <Widget>[
+                                  _buildAppIdField(),
+                                  const SizedBox(height: 16),
                                   _buildEndpointField(),
                                   const SizedBox(height: 16),
                                   _buildRemoteIdField(),
@@ -222,6 +226,25 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
     );
   }
 
+  Widget _buildAppIdField() {
+    return TextFormField(
+      controller: _appIdController,
+      enabled: !_startingPlayer,
+      textInputAction: TextInputAction.next,
+      style: const TextStyle(fontSize: 13),
+      decoration: const InputDecoration(
+        labelText: 'app_id',
+        hintText: 'TiRTC 应用标识，进入播放页前必须提供。',
+      ),
+      validator: (String? value) {
+        if ((value ?? '').trim().isEmpty) {
+          return 'app_id 为必填项。';
+        }
+        return null;
+      },
+    );
+  }
+
   Widget _buildRemoteIdField() {
     return TextFormField(
       controller: _remoteIdController,
@@ -326,6 +349,10 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
     return _endpointController.text.trim();
   }
 
+  String _resolvedAppId() {
+    return _appIdController.text.trim();
+  }
+
   Future<void> _scanToken() async {
     _dismissKeyboard();
     final DemoScanPayload? payload = await Navigator.of(context).push<DemoScanPayload>(
@@ -339,18 +366,20 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
       return;
     }
 
+    _appIdController.text = payload.appId;
     _remoteIdController.text = payload.remoteId;
     _tokenController.text = payload.token;
     _applyScannedEndpoint(payload.endpoint);
     TiRtcLogging.i(
       'flutter_example',
-      'scan_payload_applied remoteId=${payload.remoteId} endpoint=${_resolvedEndpoint()}',
+      'scan_payload_applied appIdPresent=${payload.appId.isNotEmpty} '
+          'remoteId=${payload.remoteId} endpoint=${_resolvedEndpoint()}',
     );
 
     _showSnack(
       payload.endpoint == null || payload.endpoint!.trim().isEmpty
-          ? '扫码成功，已填充 remote_id / token，并保留当前 endpoint。'
-          : '扫码成功，已填充 remote_id / token / endpoint。',
+          ? '扫码成功，已填充 app_id / remote_id / token，并保留当前 endpoint。'
+          : '扫码成功，已填充 app_id / remote_id / token / endpoint。',
     );
   }
 
@@ -363,6 +392,7 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
       text: normalizedEndpoint,
       selection: TextSelection.collapsed(offset: normalizedEndpoint.length),
     );
+    _appIdController.selection = TextSelection.collapsed(offset: _appIdController.text.length);
     _remoteIdController.selection = TextSelection.collapsed(offset: _remoteIdController.text.length);
     _tokenController.selection = TextSelection.collapsed(offset: _tokenController.text.length);
   }
@@ -391,6 +421,7 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
     }
 
     return DemoPlaybackConfiguration(
+      appId: _resolvedAppId(),
       endpoint: _resolvedEndpoint(),
       remoteId: _remoteIdController.text.trim(),
       audioStreamId: _resolvedStreamId(
@@ -430,12 +461,15 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
 
     TiRtcLogging.i(
       'flutter_example',
-      'runtime_initialize_requested endpoint=${configuration.endpoint} '
-          'remoteId=${configuration.remoteId}',
+      'runtime_initialize_requested appIdPresent=${configuration.appId.isNotEmpty} '
+          'endpoint=${configuration.endpoint} remoteId=${configuration.remoteId}',
     );
     final int initializeCode = await TiRtc.initialize(
-      endpoint: configuration.endpoint,
-      consoleLoggingEnabled: true,
+      TiRtcInitOptions(
+        appId: configuration.appId,
+        endpoint: configuration.endpoint,
+        consoleLogEnabled: true,
+      ),
     );
     if (!mounted) {
       if (initializeCode == 0) {

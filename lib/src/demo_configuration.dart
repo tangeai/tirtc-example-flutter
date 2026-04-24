@@ -5,6 +5,7 @@ final class DemoPlaybackConfiguration {
   static const int defaultVideoStreamId = 11;
 
   const DemoPlaybackConfiguration({
+    required this.appId,
     required this.endpoint,
     required this.remoteId,
     required this.audioStreamId,
@@ -12,6 +13,7 @@ final class DemoPlaybackConfiguration {
     required this.token,
   });
 
+  final String appId;
   final String endpoint;
   final String remoteId;
   final int audioStreamId;
@@ -21,11 +23,13 @@ final class DemoPlaybackConfiguration {
 
 final class DemoScanPayload {
   const DemoScanPayload({
+    required this.appId,
     required this.remoteId,
     required this.token,
     this.endpoint,
   });
 
+  final String appId;
   final String remoteId;
   final String token;
   final String? endpoint;
@@ -42,13 +46,15 @@ final class DemoScanPayload {
     }
 
     final Map<Object?, Object?> payload = decoded;
+    final String appId = _stringValue(payload['app_id']);
     final String remoteId = _stringValue(payload['remote_id']);
     final String token = _stringValue(payload['token']);
     final String? endpoint = payload.containsKey('endpoint') ? _stringValue(payload['endpoint']) : null;
-    if (remoteId.isEmpty || token.isEmpty) {
+    if (appId.isEmpty || remoteId.isEmpty || token.isEmpty) {
       return null;
     }
     return DemoScanPayload(
+      appId: appId,
       remoteId: remoteId,
       token: token,
       endpoint: endpoint,

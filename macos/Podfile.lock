@@ -2,10 +2,10 @@ PODS:
   - FlutterMacOS (1.0.0)
   - mobile_scanner (3.5.6):
     - FlutterMacOS
-  - TiRTC_AV (0.1.0-alpha.20260421182943)
-  - tirtc_av_kit (0.1.0):
+  - TiRTC_AV (0.1.0-alpha.20260424000107)
+  - tirtc_av_kit (1.0.0):
     - FlutterMacOS
-    - TiRTC_AV (= 0.1.0-alpha.20260421182943)
+    - TiRTC_AV (= 0.1.0-alpha.20260424000107)
 
 DEPENDENCIES:
   - FlutterMacOS (from `Flutter/ephemeral`)
@@ -27,9 +27,9 @@ EXTERNAL SOURCES:
 SPEC CHECKSUMS:
   FlutterMacOS: d0db08ddef1a9af05a5ec4b724367152bb0500b1
   mobile_scanner: 54ceceae0c8da2457e26a362a6be5c61154b1829
-  TiRTC_AV: a75a9a3cae30c3ffc0b3e43d2e45107522ef3918
-  tirtc_av_kit: 12b2eb39d44fded9e547f783de0796859feda95e
+  TiRTC_AV: ddf50d2d1cb42128f1582f2a38bf388c46c3fe72
+  tirtc_av_kit: 72d79944481bee8999909e19a9e1c64b3b1b04a1
 
 PODFILE CHECKSUM: bce492637cea7ba1048021b47f7a9cbe5658db41
 
-COCOAPODS: 1.16.2
+COCOAPODS: 1.15.2

@@ -61,10 +61,10 @@ PODS:
   - nanopb/decode (2.30910.0)
   - nanopb/encode (2.30910.0)
   - PromisesObjC (2.4.0)
-  - TiRTC_AV (0.1.0-alpha.20260421182943)
+  - TiRTC_AV (0.1.0-alpha.20260424000107)
   - tirtc_av_kit (0.1.0):
     - Flutter
-    - TiRTC_AV (= 0.1.0-alpha.20260421182943)
+    - TiRTC_AV (= 0.1.0-alpha.20260424000107)
 
 DEPENDENCIES:
   - Flutter (from `Flutter`)
@@ -110,9 +110,9 @@ SPEC CHECKSUMS:
   mobile_scanner: 38dcd8a49d7d485f632b7de65e4900010187aef2
   nanopb: 438bc412db1928dac798aa6fd75726007be04262
   PromisesObjC: f5707f49cb48b9636751c5b2e7d227e43fba9f47
-  TiRTC_AV: a75a9a3cae30c3ffc0b3e43d2e45107522ef3918
-  tirtc_av_kit: f701de7eeb991b820bca0c72d2835cae60ea9681
+  TiRTC_AV: ddf50d2d1cb42128f1582f2a38bf388c46c3fe72
+  tirtc_av_kit: 6f0dfb954641a5972d407d5c32827f40680094e2
 
 PODFILE CHECKSUM: 9cc9a778c16dd97e380524b2ce0fddaf5788623d
 
-COCOAPODS: 1.16.2
+COCOAPODS: 1.15.2

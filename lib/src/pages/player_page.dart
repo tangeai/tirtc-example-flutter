@@ -9,6 +9,7 @@ import '../demo_configuration.dart';
 import '../demo_route_lifecycle.dart';
 import '../widgets/notice_dialog.dart';
 import '../widgets/playback_center_loading.dart';
+import '../widgets/playback_metrics_overlay.dart';
 
 enum _PlaybackViewState { idle, connecting, playing, failed }
 
@@ -26,6 +27,8 @@ class DemoPlayerPage extends StatefulWidget {
 
 class _DemoPlayerPageState extends State<DemoPlayerPage>
     with WidgetsBindingObserver, ExampleRouteLifecycleState<DemoPlayerPage> {
+  static const Duration _metricsPollInterval = Duration(seconds: 1);
+
   late final TiRtcConn _connection;
   late final TiRtcAudioOutput _audioOutput;
   late final TiRtcVideoOutput _videoOutput;
@@ -36,6 +39,8 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
   int _sessionGeneration = 0;
   bool _uploadingLogs = false;
   bool _iosPlaybackAudioSessionRetained = false;
+  Timer? _metricsPollTimer;
+  PlaybackMetricsOverlayModel? _metricsOverlay;
 
   @override
   void initState() {
@@ -48,6 +53,7 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
   @override
   void dispose() {
     _sessionGeneration += 1;
+    _stopMetricsPolling();
     _clearSessionCallbacks();
     _disconnectSession(reason: 'dispose');
     _videoOutput.dispose();
@@ -213,6 +219,8 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     required String nextStatusSummary,
   }) async {
     _sessionGeneration += 1;
+    _stopMetricsPolling();
+    _clearMetricsOverlay();
     _clearSessionCallbacks();
     _disconnectSession(reason: reason);
     _shouldKeepPlaying = !clearIntent;
@@ -232,6 +240,62 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     _audioOutput.detach();
     _connection.disconnect();
     _releasePlaybackAudioSessionIfNeeded(reason: reason);
+  }
+
+  void _clearMetricsOverlay() {
+    if (!mounted) {
+      _metricsOverlay = null;
+      return;
+    }
+    setState(() {
+      _metricsOverlay = null;
+    });
+  }
+
+  void _startMetricsPolling({required int generation}) {
+    _stopMetricsPolling();
+    _pollPlaybackMetrics(generation: generation);
+    _metricsPollTimer = Timer.periodic(_metricsPollInterval, (_) {
+      _pollPlaybackMetrics(generation: generation);
+    });
+  }
+
+  void _stopMetricsPolling() {
+    _metricsPollTimer?.cancel();
+    _metricsPollTimer = null;
+  }
+
+  void _pollPlaybackMetrics({required int generation}) {
+    if (!_acceptGeneration(generation) || _playbackState != _PlaybackViewState.playing) {
+      return;
+    }
+
+    final TiRtcConnMetricsResult connResult = _connection.getMetricsSnapshot();
+    final TiRtcVideoOutputMetricsResult videoResult = _videoOutput.getMetricsSnapshot();
+    if (connResult.code != 0 || videoResult.code != 0) {
+      return;
+    }
+
+    final TiRtcConnMetricsSnapshot? connSnapshot = connResult.snapshot;
+    final TiRtcVideoOutputMetricsSnapshot? videoSnapshot = videoResult.snapshot;
+    if (connSnapshot == null || videoSnapshot == null) {
+      return;
+    }
+
+    final PlaybackMetricsOverlayModel nextMetrics = PlaybackMetricsOverlayModel(
+      connectDurationMs: connSnapshot.connectDurationMs,
+      firstFrameDurationMs: videoSnapshot.startup.firstFrameDurationMs,
+      sessionStutterRatio: videoSnapshot.stutter.sessionStutterRatio,
+      sessionStutterCount: videoSnapshot.stutter.sessionStutterCount,
+      sessionStutterPeakMs: videoSnapshot.stutter.sessionStutterPeakMs,
+    );
+
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _metricsOverlay = nextMetrics;
+    });
   }
 
   Future<int> _retainPlaybackAudioSessionIfNeeded() async {
@@ -326,6 +390,7 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     }
 
     if (state == TiRtcConnState.disconnected) {
+      _stopMetricsPolling();
       if (errorCode == 0) {
         _handleFailure(
           generation: generation,
@@ -351,6 +416,7 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     }
 
     if (state == TiRtcAudioOutputState.failed) {
+      _stopMetricsPolling();
       _handleFailure(
         generation: generation,
         label: _playbackErrorLabel(0),
@@ -368,6 +434,7 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     }
 
     if (state == TiRtcVideoOutputState.failed) {
+      _stopMetricsPolling();
       _handleFailure(
         generation: generation,
         label: _playbackErrorLabel(0),
@@ -380,6 +447,7 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
       setState(() {
         _playbackState = _PlaybackViewState.playing;
       });
+      _startMetricsPolling(generation: generation);
     }
   }
 
@@ -393,11 +461,13 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     }
 
     _sessionGeneration += 1;
+    _stopMetricsPolling();
     _clearSessionCallbacks();
     _disconnectSession(reason: 'failure');
     setState(() {
       _playbackState = _PlaybackViewState.failed;
       _stageStatusLabel = label;
+      _metricsOverlay = null;
     });
     TiRtcLogging.w('flutter_example', 'playback_failed summary=$summary');
   }
@@ -473,6 +543,18 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     );
   }
 
+  Future<void> _showMetricsExplanationDialog() {
+    return context.showNoticeDialog(
+      title: '指标说明',
+      content: '连接耗时：从发起连接到连接成功的耗时。\n\n'
+          '首帧耗时：从发起连接到首帧显示的耗时。\n\n'
+          '当前卡顿指标按端上当前判定规则统计，只计入达到阈值的明显卡顿。\n\n'
+          '检测到的卡顿占比：从开始播放到现在，按当前端上判定规则识别出的卡顿总时长，占播放总时长的比例。\n\n'
+          '检测到的卡顿次数：本次播放中，按当前端上判定规则识别出的连续卡顿事件次数。\n\n'
+          '检测到的最长卡顿：本次播放中，按当前端上判定规则识别出的单次最长卡顿时长。',
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final bool connecting = _playbackState == _PlaybackViewState.connecting;
@@ -543,6 +625,19 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
         children: <Widget>[
           Positioned.fill(child: _buildVideoStage()),
           Positioned.fill(child: _buildOverlayGradient()),
+          if (_metricsOverlay != null)
+            SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.only(top: 18, left: 18),
+                child: Align(
+                  alignment: Alignment.topLeft,
+                  child: PlaybackMetricsOverlay(
+                    metrics: _metricsOverlay!,
+                    onShowExplanation: _showMetricsExplanationDialog,
+                  ),
+                ),
+              ),
+            ),
           SafeArea(
             top: false,
             child: Padding(

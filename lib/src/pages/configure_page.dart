@@ -398,14 +398,14 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
   }
 
   Future<void> _startPlaying() async {
-    final DemoPlaybackConfiguration? configuration = _validatedConfiguration(showFeedback: true);
+    final DemoDownlinkConfiguration? configuration = _validatedConfiguration(showFeedback: true);
     if (configuration == null) {
       return;
     }
     await _openPlayer(configuration);
   }
 
-  DemoPlaybackConfiguration? _validatedConfiguration({
+  DemoDownlinkConfiguration? _validatedConfiguration({
     required bool showFeedback,
   }) {
     setState(() {
@@ -420,17 +420,17 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
       return null;
     }
 
-    return DemoPlaybackConfiguration(
+    return DemoDownlinkConfiguration(
       appId: _resolvedAppId(),
       endpoint: _resolvedEndpoint(),
       remoteId: _remoteIdController.text.trim(),
       audioStreamId: _resolvedStreamId(
         controller: _audioStreamIdController,
-        fallback: DemoPlaybackConfiguration.defaultAudioStreamId,
+        fallback: DemoDownlinkConfiguration.defaultAudioStreamId,
       ),
       videoStreamId: _resolvedStreamId(
         controller: _videoStreamIdController,
-        fallback: DemoPlaybackConfiguration.defaultVideoStreamId,
+        fallback: DemoDownlinkConfiguration.defaultVideoStreamId,
       ),
       token: _tokenController.text.trim(),
     );
@@ -447,7 +447,7 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
     return int.parse(text);
   }
 
-  Future<void> _openPlayer(DemoPlaybackConfiguration configuration) async {
+  Future<void> _openPlayer(DemoDownlinkConfiguration configuration) async {
     if (_startingPlayer) {
       return;
     }
@@ -510,7 +510,7 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
       );
       _dismissKeyboard();
       _applyConfigurePageSystemOverlayStyle();
-      _clearTokenAfterPlaybackReturn();
+      _clearTokenAfterDownlinkReturn();
     } finally {
       final int shutdownCode = _shutdownRuntime();
       if (shutdownCode != 0) {
@@ -584,7 +584,7 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
     FocusManager.instance.primaryFocus?.unfocus();
   }
 
-  void _clearTokenAfterPlaybackReturn() {
+  void _clearTokenAfterDownlinkReturn() {
     _tokenController.clear();
     _showSnack('已返回配置页，token 已清空，请重新扫码或粘贴。');
   }

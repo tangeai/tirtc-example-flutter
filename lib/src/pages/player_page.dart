@@ -2,16 +2,22 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:tirtc_av_kit/tirtc_av_kit.dart';
 
 import '../app_theme.dart';
 import '../demo_configuration.dart';
 import '../demo_route_lifecycle.dart';
 import '../widgets/notice_dialog.dart';
-import '../widgets/playback_center_loading.dart';
-import '../widgets/playback_metrics_overlay.dart';
+import '../widgets/downlink_center_loading.dart';
+import '../widgets/downlink_metrics_overlay.dart';
 
-enum _PlaybackViewState { idle, connecting, playing, failed }
+enum _DownlinkViewState { idle, connecting, playing, failed }
+
+const MethodChannel _hostPlatformChannel = MethodChannel('tirtc_av_kit/platform');
+const String _audioSessionMethodMiddle = 'Play';
+const String _audioSessionMethodTail = 'backAudioSession';
+const int _hostPlatformInternalError = 1001;
 
 class DemoPlayerPage extends StatefulWidget {
   const DemoPlayerPage({
@@ -19,7 +25,7 @@ class DemoPlayerPage extends StatefulWidget {
     required this.configuration,
   });
 
-  final DemoPlaybackConfiguration configuration;
+  final DemoDownlinkConfiguration configuration;
 
   @override
   State<DemoPlayerPage> createState() => _DemoPlayerPageState();
@@ -33,14 +39,14 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
   late final TiRtcAudioOutput _audioOutput;
   late final TiRtcVideoOutput _videoOutput;
 
-  _PlaybackViewState _playbackState = _PlaybackViewState.idle;
+  _DownlinkViewState _downlinkState = _DownlinkViewState.idle;
   String _stageStatusLabel = '加载中';
   bool _shouldKeepPlaying = true;
   int _sessionGeneration = 0;
   bool _uploadingLogs = false;
-  bool _iosPlaybackAudioSessionRetained = false;
+  bool _iosDownlinkAudioSessionRetained = false;
   Timer? _metricsPollTimer;
-  PlaybackMetricsOverlayModel? _metricsOverlay;
+  DownlinkMetricsOverlayModel? _metricsOverlay;
 
   @override
   void initState() {
@@ -65,23 +71,23 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
   @override
   void onRouteActive(String reason) {
     if (_shouldKeepPlaying) {
-      unawaited(_startPlayback(reason: reason));
+      unawaited(_startDownlink(reason: reason));
     }
   }
 
   @override
   void onRouteInactive(String reason) {
     unawaited(
-      _stopPlayback(
+      _stopDownlink(
         reason: reason,
         clearIntent: false,
-        nextStatusSummary: 'Playback paused while the page is inactive.',
+        nextStatusSummary: 'Downlink paused while the page is inactive.',
       ),
     );
   }
 
-  Future<void> _startPlayback({required String reason}) async {
-    if (_playbackState == _PlaybackViewState.connecting || _playbackState == _PlaybackViewState.playing) {
+  Future<void> _startDownlink({required String reason}) async {
+    if (_downlinkState == _DownlinkViewState.connecting || _downlinkState == _DownlinkViewState.playing) {
       return;
     }
 
@@ -89,26 +95,26 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     final int generation = ++_sessionGeneration;
 
     setState(() {
-      _playbackState = _PlaybackViewState.connecting;
+      _downlinkState = _DownlinkViewState.connecting;
       _stageStatusLabel = '连接中';
     });
 
     TiRtcLogging.i(
       'flutter_example',
-      'playback_start_requested reason=$reason '
+      'downlink_start_requested reason=$reason '
           'remoteId=${widget.configuration.remoteId}',
     );
 
-    final int audioSessionCode = await _retainPlaybackAudioSessionIfNeeded();
+    final int audioSessionCode = await _retainOutputAudioSessionIfNeeded();
     if (!_acceptGeneration(generation)) {
-      _releasePlaybackAudioSessionIfNeeded(reason: 'stale_audio_session_retain');
+      _releaseOutputAudioSessionIfNeeded(reason: 'stale_audio_session_retain');
       return;
     }
     if (audioSessionCode != 0) {
       _handleFailure(
         generation: generation,
         label: '播放准备失败 · ${TiRtc.formatError(audioSessionCode)}',
-        summary: 'Playback audio session setup failed with ${TiRtc.formatError(audioSessionCode)}.',
+        summary: 'Downlink audio session setup failed with ${TiRtc.formatError(audioSessionCode)}.',
       );
       return;
     }
@@ -138,7 +144,7 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
       _connection.disconnect();
       _handleFailure(
         generation: generation,
-        label: _playbackErrorLabel(audioAttachCode),
+        label: _downlinkErrorLabel(audioAttachCode),
         summary: 'Audio attach failed with ${TiRtc.formatError(audioAttachCode)}.',
       );
       return;
@@ -154,7 +160,7 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
       _connection.disconnect();
       _handleFailure(
         generation: generation,
-        label: _playbackErrorLabel(videoAttachCode),
+        label: _downlinkErrorLabel(videoAttachCode),
         summary: 'Video attach failed with ${TiRtc.formatError(videoAttachCode)}.',
       );
       return;
@@ -187,7 +193,7 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     _audioOutput.onError = (int code) {
       _handleFailure(
         generation: generation,
-        label: _playbackErrorLabel(code),
+        label: _downlinkErrorLabel(code),
         summary: 'Audio output failed with ${TiRtc.formatError(code)}.',
       );
     };
@@ -198,7 +204,7 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     _videoOutput.onError = (int code) {
       _handleFailure(
         generation: generation,
-        label: _playbackErrorLabel(code),
+        label: _downlinkErrorLabel(code),
         summary: 'Video output failed with ${TiRtc.formatError(code)}.',
       );
     };
@@ -213,7 +219,7 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     _videoOutput.onError = null;
   }
 
-  Future<void> _stopPlayback({
+  Future<void> _stopDownlink({
     required String reason,
     required bool clearIntent,
     required String nextStatusSummary,
@@ -229,17 +235,17 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
       return;
     }
     setState(() {
-      _playbackState = _PlaybackViewState.idle;
+      _downlinkState = _DownlinkViewState.idle;
       _stageStatusLabel = clearIntent ? '已停止' : '加载中';
     });
   }
 
   void _disconnectSession({required String reason}) {
-    TiRtcLogging.i('flutter_example', 'playback_stop_requested reason=$reason');
+    TiRtcLogging.i('flutter_example', 'downlink_stop_requested reason=$reason');
     _videoOutput.detach();
     _audioOutput.detach();
     _connection.disconnect();
-    _releasePlaybackAudioSessionIfNeeded(reason: reason);
+    _releaseOutputAudioSessionIfNeeded(reason: reason);
   }
 
   void _clearMetricsOverlay() {
@@ -254,9 +260,9 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
 
   void _startMetricsPolling({required int generation}) {
     _stopMetricsPolling();
-    _pollPlaybackMetrics(generation: generation);
+    _pollDownlinkMetrics(generation: generation);
     _metricsPollTimer = Timer.periodic(_metricsPollInterval, (_) {
-      _pollPlaybackMetrics(generation: generation);
+      _pollDownlinkMetrics(generation: generation);
     });
   }
 
@@ -265,8 +271,8 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     _metricsPollTimer = null;
   }
 
-  void _pollPlaybackMetrics({required int generation}) {
-    if (!_acceptGeneration(generation) || _playbackState != _PlaybackViewState.playing) {
+  void _pollDownlinkMetrics({required int generation}) {
+    if (!_acceptGeneration(generation) || _downlinkState != _DownlinkViewState.playing) {
       return;
     }
 
@@ -282,7 +288,7 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
       return;
     }
 
-    final PlaybackMetricsOverlayModel nextMetrics = PlaybackMetricsOverlayModel(
+    final DownlinkMetricsOverlayModel nextMetrics = DownlinkMetricsOverlayModel(
       connectDurationMs: connSnapshot.connectDurationMs,
       firstFrameDurationMs: videoSnapshot.startup.firstFrameDurationMs,
       sessionStutterRatio: videoSnapshot.stutter.sessionStutterRatio,
@@ -298,54 +304,67 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     });
   }
 
-  Future<int> _retainPlaybackAudioSessionIfNeeded() async {
-    if (!Platform.isIOS || _iosPlaybackAudioSessionRetained) {
+  Future<int> _retainOutputAudioSessionIfNeeded() async {
+    if (!Platform.isIOS || _iosDownlinkAudioSessionRetained) {
       return 0;
     }
 
-    TiRtcLogging.i('flutter_example', 'playback_audio_session_retain_requested');
-    final int code = await TiRtcHostPlatformApi.instance.retainPlaybackAudioSession();
+    TiRtcLogging.i('flutter_example', 'downlink_audio_session_retain_requested');
+    final int code = await _invokeOutputAudioSessionMethod(retain: true);
     if (code == 0) {
-      _iosPlaybackAudioSessionRetained = true;
-      TiRtcLogging.i('flutter_example', 'playback_audio_session_retain_succeeded');
+      _iosDownlinkAudioSessionRetained = true;
+      TiRtcLogging.i('flutter_example', 'downlink_audio_session_retain_succeeded');
       return 0;
     }
 
     TiRtcLogging.w(
       'flutter_example',
-      'playback_audio_session_retain_failed code=$code',
+      'downlink_audio_session_retain_failed code=$code',
     );
     return code;
   }
 
-  void _releasePlaybackAudioSessionIfNeeded({required String reason}) {
-    if (!Platform.isIOS || !_iosPlaybackAudioSessionRetained) {
+  void _releaseOutputAudioSessionIfNeeded({required String reason}) {
+    if (!Platform.isIOS || !_iosDownlinkAudioSessionRetained) {
       return;
     }
 
-    _iosPlaybackAudioSessionRetained = false;
+    _iosDownlinkAudioSessionRetained = false;
     TiRtcLogging.i(
       'flutter_example',
-      'playback_audio_session_release_requested reason=$reason',
+      'downlink_audio_session_release_requested reason=$reason',
     );
     unawaited(() async {
-      final int code = await TiRtcHostPlatformApi.instance.releasePlaybackAudioSession();
+      final int code = await _invokeOutputAudioSessionMethod(retain: false);
       if (code == 0) {
-        TiRtcLogging.i('flutter_example', 'playback_audio_session_release_succeeded reason=$reason');
+        TiRtcLogging.i('flutter_example', 'downlink_audio_session_release_succeeded reason=$reason');
         return;
       }
       TiRtcLogging.w(
         'flutter_example',
-        'playback_audio_session_release_failed reason=$reason code=$code',
+        'downlink_audio_session_release_failed reason=$reason code=$code',
       );
     }());
+  }
+
+  Future<int> _invokeOutputAudioSessionMethod({required bool retain}) async {
+    final String method = '${retain ? 'retain' : 'release'}$_audioSessionMethodMiddle$_audioSessionMethodTail';
+    try {
+      final int? code = await _hostPlatformChannel.invokeMethod<int>(method);
+      return code ?? 0;
+    } on MissingPluginException {
+      return _hostPlatformInternalError;
+    } on PlatformException catch (error) {
+      final Object? details = error.details;
+      return details is int ? details : _hostPlatformInternalError;
+    }
   }
 
   bool _acceptGeneration(int generation) {
     return mounted && generation == _sessionGeneration;
   }
 
-  String _playbackErrorLabel(int code) {
+  String _downlinkErrorLabel(int code) {
     return '播放失败 · ${TiRtc.formatError(code)}';
   }
 
@@ -368,22 +387,22 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     );
 
     if (state == TiRtcConnState.connecting) {
-      if (_playbackState == _PlaybackViewState.playing) {
+      if (_downlinkState == _DownlinkViewState.playing) {
         return;
       }
       setState(() {
-        _playbackState = _PlaybackViewState.connecting;
+        _downlinkState = _DownlinkViewState.connecting;
         _stageStatusLabel = '连接中';
       });
       return;
     }
 
     if (state == TiRtcConnState.connected) {
-      if (_playbackState == _PlaybackViewState.playing) {
+      if (_downlinkState == _DownlinkViewState.playing) {
         return;
       }
       setState(() {
-        _playbackState = _PlaybackViewState.connecting;
+        _downlinkState = _DownlinkViewState.connecting;
         _stageStatusLabel = '加载中';
       });
       return;
@@ -419,7 +438,7 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
       _stopMetricsPolling();
       _handleFailure(
         generation: generation,
-        label: _playbackErrorLabel(0),
+        label: _downlinkErrorLabel(0),
         summary: 'Audio output entered a failed state.',
       );
     }
@@ -437,15 +456,15 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
       _stopMetricsPolling();
       _handleFailure(
         generation: generation,
-        label: _playbackErrorLabel(0),
+        label: _downlinkErrorLabel(0),
         summary: 'Video output entered a failed state.',
       );
       return;
     }
 
-    if (state == TiRtcVideoOutputState.rendering && _playbackState == _PlaybackViewState.connecting) {
+    if (state == TiRtcVideoOutputState.rendering && _downlinkState == _DownlinkViewState.connecting) {
       setState(() {
-        _playbackState = _PlaybackViewState.playing;
+        _downlinkState = _DownlinkViewState.playing;
       });
       _startMetricsPolling(generation: generation);
     }
@@ -465,11 +484,11 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     _clearSessionCallbacks();
     _disconnectSession(reason: 'failure');
     setState(() {
-      _playbackState = _PlaybackViewState.failed;
+      _downlinkState = _DownlinkViewState.failed;
       _stageStatusLabel = label;
       _metricsOverlay = null;
     });
-    TiRtcLogging.w('flutter_example', 'playback_failed summary=$summary');
+    TiRtcLogging.w('flutter_example', 'downlink_failed summary=$summary');
   }
 
   Future<void> _uploadLogs() async {
@@ -557,8 +576,8 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
 
   @override
   Widget build(BuildContext context) {
-    final bool connecting = _playbackState == _PlaybackViewState.connecting;
-    final bool playing = _playbackState == _PlaybackViewState.playing;
+    final bool connecting = _downlinkState == _DownlinkViewState.connecting;
+    final bool playing = _downlinkState == _DownlinkViewState.playing;
     return Scaffold(
       backgroundColor: ExampleTheme.background,
       appBar: AppBar(
@@ -631,7 +650,7 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
                 padding: const EdgeInsets.only(top: 18, left: 18),
                 child: Align(
                   alignment: Alignment.topLeft,
-                  child: PlaybackMetricsOverlay(
+                  child: DownlinkMetricsOverlay(
                     metrics: _metricsOverlay!,
                     onShowExplanation: _showMetricsExplanationDialog,
                   ),
@@ -654,15 +673,15 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
                           : () {
                               if (playing) {
                                 unawaited(
-                                  _stopPlayback(
+                                  _stopDownlink(
                                     reason: 'manual_stop',
                                     clearIntent: true,
-                                    nextStatusSummary: 'Playback stopped.',
+                                    nextStatusSummary: 'Downlink stopped.',
                                   ),
                                 );
                               } else {
                                 unawaited(
-                                  _startPlayback(reason: 'manual_start'),
+                                  _startDownlink(reason: 'manual_start'),
                                 );
                               }
                             },
@@ -700,7 +719,7 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
   }
 
   Widget _buildVideoStage() {
-    final bool showStageOverlay = _playbackState != _PlaybackViewState.playing;
+    final bool showStageOverlay = _downlinkState != _DownlinkViewState.playing;
     return DecoratedBox(
       decoration: const BoxDecoration(color: ExampleTheme.videoBackground),
       child: Stack(
@@ -709,7 +728,7 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
           Center(child: _videoOutput.view()),
           if (showStageOverlay)
             Center(
-              child: PlaybackCenterLoading(
+              child: DownlinkCenterLoading(
                 label: _stageStatusLabel,
                 mode: _centerIndicatorMode,
               ),
@@ -719,20 +738,20 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     );
   }
 
-  PlaybackCenterIndicatorMode get _centerIndicatorMode {
-    if (_playbackState == _PlaybackViewState.connecting) {
-      return PlaybackCenterIndicatorMode.loading;
+  DownlinkCenterIndicatorMode get _centerIndicatorMode {
+    if (_downlinkState == _DownlinkViewState.connecting) {
+      return DownlinkCenterIndicatorMode.loading;
     }
 
-    if (_playbackState == _PlaybackViewState.failed) {
-      return PlaybackCenterIndicatorMode.error;
+    if (_downlinkState == _DownlinkViewState.failed) {
+      return DownlinkCenterIndicatorMode.error;
     }
 
-    if (_playbackState == _PlaybackViewState.idle && !_shouldKeepPlaying) {
-      return PlaybackCenterIndicatorMode.error;
+    if (_downlinkState == _DownlinkViewState.idle && !_shouldKeepPlaying) {
+      return DownlinkCenterIndicatorMode.error;
     }
 
-    return PlaybackCenterIndicatorMode.loading;
+    return DownlinkCenterIndicatorMode.loading;
   }
 
   Widget _buildOverlayGradient() {

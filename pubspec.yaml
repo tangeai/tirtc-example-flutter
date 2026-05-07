@@ -1,5 +1,5 @@
 name: tirtc_av_kit_example
-description: Two-page playback demo for the tirtc_av_kit plugin.
+description: Two-page downlink demo for the tirtc_av_kit plugin.
 publish_to: 'none'
 version: 0.1.0-dev
 

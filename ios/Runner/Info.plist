@@ -46,7 +46,7 @@
 	<key>NSCameraUsageDescription</key>
 	<string>Scan TiRTC token QR codes to open the demo player.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Ti RTC uses local network discovery to trigger iOS network access permission before playback.</string>
+	<string>Ti RTC uses local network discovery to trigger iOS network access permission before downlink.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_tirtc-demo._tcp</string>

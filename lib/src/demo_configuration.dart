@@ -1,10 +1,10 @@
 import 'dart:convert';
 
-final class DemoPlaybackConfiguration {
+final class DemoDownlinkConfiguration {
   static const int defaultAudioStreamId = 10;
   static const int defaultVideoStreamId = 11;
 
-  const DemoPlaybackConfiguration({
+  const DemoDownlinkConfiguration({
     required this.appId,
     required this.endpoint,
     required this.remoteId,

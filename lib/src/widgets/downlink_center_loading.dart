@@ -4,23 +4,23 @@ import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
 
-enum PlaybackCenterIndicatorMode { loading, error }
+enum DownlinkCenterIndicatorMode { loading, error }
 
-class PlaybackCenterLoading extends StatefulWidget {
-  const PlaybackCenterLoading({
+class DownlinkCenterLoading extends StatefulWidget {
+  const DownlinkCenterLoading({
     super.key,
     this.label = '加载中',
-    this.mode = PlaybackCenterIndicatorMode.loading,
+    this.mode = DownlinkCenterIndicatorMode.loading,
   });
 
   final String label;
-  final PlaybackCenterIndicatorMode mode;
+  final DownlinkCenterIndicatorMode mode;
 
   @override
-  State<PlaybackCenterLoading> createState() => _PlaybackCenterLoadingState();
+  State<DownlinkCenterLoading> createState() => _DownlinkCenterLoadingState();
 }
 
-class _PlaybackCenterLoadingState extends State<PlaybackCenterLoading> with SingleTickerProviderStateMixin {
+class _DownlinkCenterLoadingState extends State<DownlinkCenterLoading> with SingleTickerProviderStateMixin {
   late final AnimationController _controller;
 
   @override
@@ -34,7 +34,7 @@ class _PlaybackCenterLoadingState extends State<PlaybackCenterLoading> with Sing
   }
 
   @override
-  void didUpdateWidget(covariant PlaybackCenterLoading oldWidget) {
+  void didUpdateWidget(covariant DownlinkCenterLoading oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.mode != widget.mode) {
       _syncAnimationState();
@@ -42,7 +42,7 @@ class _PlaybackCenterLoadingState extends State<PlaybackCenterLoading> with Sing
   }
 
   void _syncAnimationState() {
-    if (widget.mode == PlaybackCenterIndicatorMode.loading) {
+    if (widget.mode == DownlinkCenterIndicatorMode.loading) {
       if (!_controller.isAnimating) {
         _controller.repeat();
       }
@@ -136,7 +136,7 @@ class _PlaybackCenterLoadingState extends State<PlaybackCenterLoading> with Sing
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.center,
             children: <Widget>[
-              if (widget.mode == PlaybackCenterIndicatorMode.loading)
+              if (widget.mode == DownlinkCenterIndicatorMode.loading)
                 _buildLoadingIndicator()
               else
                 _buildErrorIndicator(),

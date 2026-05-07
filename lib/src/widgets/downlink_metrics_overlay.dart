@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
 
-class PlaybackMetricsOverlayModel {
-  const PlaybackMetricsOverlayModel({
+class DownlinkMetricsOverlayModel {
+  const DownlinkMetricsOverlayModel({
     required this.connectDurationMs,
     required this.firstFrameDurationMs,
     required this.sessionStutterRatio,
@@ -18,14 +18,14 @@ class PlaybackMetricsOverlayModel {
   final int? sessionStutterPeakMs;
 }
 
-class PlaybackMetricsOverlay extends StatelessWidget {
-  const PlaybackMetricsOverlay({
+class DownlinkMetricsOverlay extends StatelessWidget {
+  const DownlinkMetricsOverlay({
     super.key,
     required this.metrics,
     required this.onShowExplanation,
   });
 
-  final PlaybackMetricsOverlayModel metrics;
+  final DownlinkMetricsOverlayModel metrics;
   final VoidCallback onShowExplanation;
 
   @override

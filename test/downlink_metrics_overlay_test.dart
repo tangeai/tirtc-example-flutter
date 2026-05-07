@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:tirtc_av_kit_example/src/widgets/playback_metrics_overlay.dart';
+import 'package:tirtc_av_kit_example/src/widgets/downlink_metrics_overlay.dart';
 
 void main() {
   testWidgets('overlay shows session-first metrics and explanation entry', (
@@ -12,8 +12,8 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
-          body: PlaybackMetricsOverlay(
-            metrics: const PlaybackMetricsOverlayModel(
+          body: DownlinkMetricsOverlay(
+            metrics: const DownlinkMetricsOverlayModel(
               connectDurationMs: 320,
               firstFrameDurationMs: 820,
               sessionStutterRatio: 0.125,

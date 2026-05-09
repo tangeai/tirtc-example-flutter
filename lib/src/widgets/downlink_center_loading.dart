@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
 
-enum DownlinkCenterIndicatorMode { loading, error }
+enum DownlinkCenterIndicatorMode { loading, running, error }
 
 class DownlinkCenterLoading extends StatefulWidget {
   const DownlinkCenterLoading({
@@ -112,6 +112,14 @@ class _DownlinkCenterLoadingState extends State<DownlinkCenterLoading> with Sing
     );
   }
 
+  Widget _buildRunningIndicator() {
+    return const Icon(
+      Icons.radio_button_checked_rounded,
+      size: 32,
+      color: ExampleTheme.primary,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final TextTheme textTheme = Theme.of(context).textTheme;
@@ -136,10 +144,11 @@ class _DownlinkCenterLoadingState extends State<DownlinkCenterLoading> with Sing
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.center,
             children: <Widget>[
-              if (widget.mode == DownlinkCenterIndicatorMode.loading)
-                _buildLoadingIndicator()
-              else
-                _buildErrorIndicator(),
+              switch (widget.mode) {
+                DownlinkCenterIndicatorMode.loading => _buildLoadingIndicator(),
+                DownlinkCenterIndicatorMode.running => _buildRunningIndicator(),
+                DownlinkCenterIndicatorMode.error => _buildErrorIndicator(),
+              },
               const SizedBox(height: 12),
               ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 240),

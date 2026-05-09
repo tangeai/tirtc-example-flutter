@@ -44,7 +44,9 @@
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>Scan TiRTC token QR codes to open the demo player.</string>
+	<string>Capture local video for TiRTC example calls and scan token QR codes.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Capture local audio for TiRTC example calls.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Ti RTC uses local network discovery to trigger iOS network access permission before downlink.</string>
 	<key>NSBonjourServices</key>

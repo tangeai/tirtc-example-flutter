@@ -1,31 +1,37 @@
 import 'dart:async';
-import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:tirtc_av_kit/tirtc_av_kit.dart';
 
 import '../app_theme.dart';
 import '../demo_configuration.dart';
+import '../demo_downlink_session.dart';
+import '../demo_downlink_support.dart';
 import '../demo_route_lifecycle.dart';
+import '../demo_test_hooks.dart';
+import '../demo_video_attach_flow.dart';
+import '../demo_widget_keys.dart';
+import '../widgets/command_panel.dart';
+import '../widgets/command_panel_model.dart';
 import '../widgets/notice_dialog.dart';
 import '../widgets/downlink_center_loading.dart';
 import '../widgets/downlink_metrics_overlay.dart';
+import '../widgets/player_page_widgets.dart';
 
 enum _DownlinkViewState { idle, connecting, playing, failed }
-
-const MethodChannel _hostPlatformChannel = MethodChannel('tirtc_av_kit/platform');
-const String _audioSessionMethodMiddle = 'Play';
-const String _audioSessionMethodTail = 'backAudioSession';
-const int _hostPlatformInternalError = 1001;
 
 class DemoPlayerPage extends StatefulWidget {
   const DemoPlayerPage({
     super.key,
     required this.configuration,
+    this.smokeMarkerSink,
+    this.smokeRenderWindowSeconds = 30,
   });
 
   final DemoDownlinkConfiguration configuration;
+  final DemoAutomationMarkerSink? smokeMarkerSink;
+  final int smokeRenderWindowSeconds;
 
   @override
   State<DemoPlayerPage> createState() => _DemoPlayerPageState();
@@ -35,36 +41,48 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     with WidgetsBindingObserver, ExampleRouteLifecycleState<DemoPlayerPage> {
   static const Duration _metricsPollInterval = Duration(seconds: 1);
 
-  late final TiRtcConn _connection;
-  late final TiRtcAudioOutput _audioOutput;
-  late final TiRtcVideoOutput _videoOutput;
+  final DemoDownlinkAudioSession _audioSession = DemoDownlinkAudioSession();
+  final DemoLogUploader _logUploader = DemoLogUploader();
+  late final DemoDownlinkSession _session;
 
   _DownlinkViewState _downlinkState = _DownlinkViewState.idle;
   String _stageStatusLabel = '加载中';
   bool _shouldKeepPlaying = true;
   int _sessionGeneration = 0;
   bool _uploadingLogs = false;
-  bool _iosDownlinkAudioSessionRetained = false;
+  bool _commandConnected = false;
+  bool _smokeConnectedMarked = false;
+  bool _smokeAudioPlayingMarked = false;
+  bool _smokeVideoRenderingMarked = false;
+  bool _smokeDebugStatsMarked = false;
+  bool _smokeRenderWindowStarted = false;
+  bool _smokeRenderWindowMarked = false;
+  int _smokeAudioErrorCount = 0;
+  int _smokeVideoErrorCount = 0;
   Timer? _metricsPollTimer;
   DownlinkMetricsOverlayModel? _metricsOverlay;
+  DownlinkMetricsOverlayModel? _lastAvStatsOverlay;
+  List<DemoCommandPanelEvent> _commandEvents = <DemoCommandPanelEvent>[];
+  StateSetter? _commandSheetSetState;
 
   @override
   void initState() {
     super.initState();
-    _connection = TiRtcConn();
-    _audioOutput = TiRtcAudioOutput();
-    _videoOutput = TiRtcVideoOutput();
+    _session = DemoDownlinkSession();
   }
 
   @override
   void dispose() {
     _sessionGeneration += 1;
     _stopMetricsPolling();
+    _metricsOverlay = null;
+    _lastAvStatsOverlay = null;
+    _commandConnected = false;
+    _commandEvents = <DemoCommandPanelEvent>[];
+    _commandSheetSetState = null;
     _clearSessionCallbacks();
     _disconnectSession(reason: 'dispose');
-    _videoOutput.dispose();
-    _audioOutput.dispose();
-    _connection.dispose();
+    _session.dispose();
     super.dispose();
   }
 
@@ -105,9 +123,9 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
           'remoteId=${widget.configuration.remoteId}',
     );
 
-    final int audioSessionCode = await _retainOutputAudioSessionIfNeeded();
+    final int audioSessionCode = await _audioSession.retainIfNeeded();
     if (!_acceptGeneration(generation)) {
-      _releaseOutputAudioSessionIfNeeded(reason: 'stale_audio_session_retain');
+      _audioSession.releaseIfNeeded(reason: 'stale_audio_session_retain');
       return;
     }
     if (audioSessionCode != 0) {
@@ -121,7 +139,7 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
 
     _bindSessionCallbacks(generation: generation);
 
-    final int connectCode = _connection.connect(
+    final int connectCode = _session.connect(
       remoteId: widget.configuration.remoteId,
       token: widget.configuration.token,
     );
@@ -135,13 +153,10 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
       return;
     }
 
-    final int audioAttachCode = _audioOutput.attach(
-      connection: _connection,
-      streamId: widget.configuration.audioStreamId,
-    );
+    final int audioAttachCode = _session.attachAudio(streamId: widget.configuration.audioStreamId);
     if (audioAttachCode != 0) {
       _clearSessionCallbacks();
-      _connection.disconnect();
+      _session.disconnectConnection();
       _handleFailure(
         generation: generation,
         label: _downlinkErrorLabel(audioAttachCode),
@@ -150,14 +165,33 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
       return;
     }
 
-    final int videoAttachCode = _videoOutput.attach(
-      connection: _connection,
-      streamId: widget.configuration.videoStreamId,
+    final int videoStreamId = widget.configuration.videoStreamId;
+    final int requestedDecoderPreference = widget.configuration.settings.videoDecoderPreference;
+    final DemoVideoAttachResult videoAttachResult = applyVideoDecoderPreferenceThenAttach(
+      sessionGeneration: generation,
+      videoStreamId: videoStreamId,
+      requestedPreference: requestedDecoderPreference,
+      applyOptions: () => _session.setVideoOptions(decoderPreference: requestedDecoderPreference),
+      attachVideo: () => _session.attachVideo(streamId: videoStreamId),
+      log: (String message) => TiRtcLogging.i('flutter_example', message),
     );
+    if (!videoAttachResult.optionsApplied) {
+      _clearSessionCallbacks();
+      _session.detachAudio();
+      _session.disconnectConnection();
+      _handleFailure(
+        generation: generation,
+        label: _downlinkErrorLabel(videoAttachResult.optionsCode),
+        summary: 'Video decoder preference apply failed with ${TiRtc.formatError(videoAttachResult.optionsCode)}.',
+      );
+      return;
+    }
+
+    final int videoAttachCode = videoAttachResult.attachCode ?? 0;
     if (videoAttachCode != 0) {
       _clearSessionCallbacks();
-      _audioOutput.detach();
-      _connection.disconnect();
+      _session.detachAudio();
+      _session.disconnectConnection();
       _handleFailure(
         generation: generation,
         label: _downlinkErrorLabel(videoAttachCode),
@@ -180,43 +214,50 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
   }
 
   void _bindSessionCallbacks({required int generation}) {
-    _connection.onStateChanged = (TiRtcConnState state, int errorCode) {
-      _handleConnectionState(
-        generation: generation,
-        state: state,
-        errorCode: errorCode,
-      );
-    };
-    _audioOutput.onStateChanged = (TiRtcAudioOutputState state) {
-      _handleAudioState(generation: generation, state: state);
-    };
-    _audioOutput.onError = (int code) {
-      _handleFailure(
-        generation: generation,
-        label: _downlinkErrorLabel(code),
-        summary: 'Audio output failed with ${TiRtc.formatError(code)}.',
-      );
-    };
-    _videoOutput.onStateChanged = (TiRtcVideoOutputState state) {
-      _handleVideoState(generation: generation, state: state);
-    };
-    _videoOutput.onRenderSizeChanged = null;
-    _videoOutput.onError = (int code) {
-      _handleFailure(
-        generation: generation,
-        label: _downlinkErrorLabel(code),
-        summary: 'Video output failed with ${TiRtc.formatError(code)}.',
-      );
-    };
+    _session.bindCallbacks(
+      onConnectionStateChanged: (TiRtcConnState state, int errorCode) {
+        _handleConnectionState(
+          generation: generation,
+          state: state,
+          errorCode: errorCode,
+        );
+      },
+      onAudioStateChanged: (TiRtcAudioOutputState state) {
+        _handleAudioState(generation: generation, state: state);
+      },
+      onAudioError: (int code) {
+        _smokeAudioErrorCount += 1;
+        _smokeFail(failureStage: 'audio_output', message: 'audio output failed', errorCode: code);
+        _handleFailure(
+          generation: generation,
+          label: _downlinkErrorLabel(code),
+          summary: 'Audio output failed with ${TiRtc.formatError(code)}.',
+        );
+      },
+      onVideoStateChanged: (TiRtcVideoOutputState state) {
+        _handleVideoState(generation: generation, state: state);
+      },
+      onVideoError: (int code) {
+        _smokeVideoErrorCount += 1;
+        _smokeFail(failureStage: 'video_output', message: 'video output failed', errorCode: code);
+        _handleFailure(
+          generation: generation,
+          label: _downlinkErrorLabel(code),
+          summary: 'Video output failed with ${TiRtc.formatError(code)}.',
+        );
+      },
+      onCommand: (int commandId, Uint8List data) {
+        _handleCommand(
+          generation: generation,
+          commandId: commandId,
+          payload: data,
+        );
+      },
+    );
   }
 
   void _clearSessionCallbacks() {
-    _connection.onStateChanged = null;
-    _audioOutput.onStateChanged = null;
-    _audioOutput.onError = null;
-    _videoOutput.onStateChanged = null;
-    _videoOutput.onRenderSizeChanged = null;
-    _videoOutput.onError = null;
+    _session.clearCallbacks();
   }
 
   Future<void> _stopDownlink({
@@ -227,6 +268,7 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     _sessionGeneration += 1;
     _stopMetricsPolling();
     _clearMetricsOverlay();
+    _clearCommandState();
     _clearSessionCallbacks();
     _disconnectSession(reason: reason);
     _shouldKeepPlaying = !clearIntent;
@@ -241,21 +283,34 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
   }
 
   void _disconnectSession({required String reason}) {
-    TiRtcLogging.i('flutter_example', 'downlink_stop_requested reason=$reason');
-    _videoOutput.detach();
-    _audioOutput.detach();
-    _connection.disconnect();
-    _releaseOutputAudioSessionIfNeeded(reason: reason);
+    _session.disconnect(reason: reason);
+    _audioSession.releaseIfNeeded(reason: reason);
   }
 
   void _clearMetricsOverlay() {
     if (!mounted) {
       _metricsOverlay = null;
+      _lastAvStatsOverlay = null;
       return;
     }
     setState(() {
       _metricsOverlay = null;
+      _lastAvStatsOverlay = null;
     });
+  }
+
+  void _clearCommandState() {
+    if (!mounted) {
+      _commandConnected = false;
+      _commandEvents = <DemoCommandPanelEvent>[];
+      _commandSheetSetState = null;
+      return;
+    }
+    setState(() {
+      _commandConnected = false;
+      _commandEvents = <DemoCommandPanelEvent>[];
+    });
+    _refreshCommandSheet();
   }
 
   void _startMetricsPolling({required int generation}) {
@@ -276,25 +331,12 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
       return;
     }
 
-    final TiRtcConnMetricsResult connResult = _connection.getMetricsSnapshot();
-    final TiRtcVideoOutputMetricsResult videoResult = _videoOutput.getMetricsSnapshot();
-    if (connResult.code != 0 || videoResult.code != 0) {
-      return;
-    }
-
-    final TiRtcConnMetricsSnapshot? connSnapshot = connResult.snapshot;
-    final TiRtcVideoOutputMetricsSnapshot? videoSnapshot = videoResult.snapshot;
-    if (connSnapshot == null || videoSnapshot == null) {
-      return;
-    }
-
-    final DownlinkMetricsOverlayModel nextMetrics = DownlinkMetricsOverlayModel(
-      connectDurationMs: connSnapshot.connectDurationMs,
-      firstFrameDurationMs: videoSnapshot.startup.firstFrameDurationMs,
-      sessionStutterRatio: videoSnapshot.stutter.sessionStutterRatio,
-      sessionStutterCount: videoSnapshot.stutter.sessionStutterCount,
-      sessionStutterPeakMs: videoSnapshot.stutter.sessionStutterPeakMs,
+    final DownlinkMetricsOverlayModel? nextMetrics = _session.readMetricsOverlay(
+      requestedDecoderPreference: widget.configuration.settings.videoDecoderPreference,
     );
+    if (nextMetrics == null) {
+      return;
+    }
 
     if (!mounted) {
       return;
@@ -302,61 +344,19 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     setState(() {
       _metricsOverlay = nextMetrics;
     });
-  }
-
-  Future<int> _retainOutputAudioSessionIfNeeded() async {
-    if (!Platform.isIOS || _iosDownlinkAudioSessionRetained) {
-      return 0;
+    if (nextMetrics.avStatsReady) {
+      _lastAvStatsOverlay = nextMetrics;
     }
-
-    TiRtcLogging.i('flutter_example', 'downlink_audio_session_retain_requested');
-    final int code = await _invokeOutputAudioSessionMethod(retain: true);
-    if (code == 0) {
-      _iosDownlinkAudioSessionRetained = true;
-      TiRtcLogging.i('flutter_example', 'downlink_audio_session_retain_succeeded');
-      return 0;
-    }
-
-    TiRtcLogging.w(
-      'flutter_example',
-      'downlink_audio_session_retain_failed code=$code',
-    );
-    return code;
-  }
-
-  void _releaseOutputAudioSessionIfNeeded({required String reason}) {
-    if (!Platform.isIOS || !_iosDownlinkAudioSessionRetained) {
-      return;
-    }
-
-    _iosDownlinkAudioSessionRetained = false;
-    TiRtcLogging.i(
-      'flutter_example',
-      'downlink_audio_session_release_requested reason=$reason',
-    );
-    unawaited(() async {
-      final int code = await _invokeOutputAudioSessionMethod(retain: false);
-      if (code == 0) {
-        TiRtcLogging.i('flutter_example', 'downlink_audio_session_release_succeeded reason=$reason');
-        return;
-      }
-      TiRtcLogging.w(
-        'flutter_example',
-        'downlink_audio_session_release_failed reason=$reason code=$code',
+    if (nextMetrics.debugStatsReady) {
+      _smokePassOnce(
+        marker: 'smoke_debug_stats_ready',
+        marked: _smokeDebugStatsMarked,
+        setMarked: () {
+          _smokeDebugStatsMarked = true;
+        },
+        payload: nextMetrics.debugMarkerPayload(sessionGeneration: generation),
       );
-    }());
-  }
-
-  Future<int> _invokeOutputAudioSessionMethod({required bool retain}) async {
-    final String method = '${retain ? 'retain' : 'release'}$_audioSessionMethodMiddle$_audioSessionMethodTail';
-    try {
-      final int? code = await _hostPlatformChannel.invokeMethod<int>(method);
-      return code ?? 0;
-    } on MissingPluginException {
-      return _hostPlatformInternalError;
-    } on PlatformException catch (error) {
-      final Object? details = error.details;
-      return details is int ? details : _hostPlatformInternalError;
+      _startSmokeRenderWindow(generation: generation);
     }
   }
 
@@ -398,10 +398,19 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     }
 
     if (state == TiRtcConnState.connected) {
+      _smokePassOnce(
+        marker: 'smoke_connected',
+        marked: _smokeConnectedMarked,
+        setMarked: () {
+          _smokeConnectedMarked = true;
+        },
+        payload: <String, Object?>{'remote_id': widget.configuration.remoteId},
+      );
       if (_downlinkState == _DownlinkViewState.playing) {
         return;
       }
       setState(() {
+        _commandConnected = true;
         _downlinkState = _DownlinkViewState.connecting;
         _stageStatusLabel = '加载中';
       });
@@ -409,7 +418,9 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     }
 
     if (state == TiRtcConnState.disconnected) {
-      _stopMetricsPolling();
+      setState(() {
+        _commandConnected = false;
+      });
       if (errorCode == 0) {
         _handleFailure(
           generation: generation,
@@ -435,11 +446,24 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     }
 
     if (state == TiRtcAudioOutputState.failed) {
-      _stopMetricsPolling();
+      _smokeAudioErrorCount += 1;
+      _smokeFail(failureStage: 'audio_output', message: 'audio output entered failed state');
       _handleFailure(
         generation: generation,
         label: _downlinkErrorLabel(0),
         summary: 'Audio output entered a failed state.',
+      );
+      return;
+    }
+
+    if (state == TiRtcAudioOutputState.playing) {
+      _smokePassOnce(
+        marker: 'smoke_audio_playing',
+        marked: _smokeAudioPlayingMarked,
+        setMarked: () {
+          _smokeAudioPlayingMarked = true;
+        },
+        payload: <String, Object?>{'audio_error_count': _smokeAudioErrorCount},
       );
     }
   }
@@ -453,7 +477,8 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     }
 
     if (state == TiRtcVideoOutputState.failed) {
-      _stopMetricsPolling();
+      _smokeVideoErrorCount += 1;
+      _smokeFail(failureStage: 'video_output', message: 'video output entered failed state');
       _handleFailure(
         generation: generation,
         label: _downlinkErrorLabel(0),
@@ -466,6 +491,7 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
       setState(() {
         _downlinkState = _DownlinkViewState.playing;
       });
+      _markSmokeVideoRendering(generation: generation);
       _startMetricsPolling(generation: generation);
     }
   }
@@ -487,8 +513,146 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
       _downlinkState = _DownlinkViewState.failed;
       _stageStatusLabel = label;
       _metricsOverlay = null;
+      _commandConnected = false;
     });
     TiRtcLogging.w('flutter_example', 'downlink_failed summary=$summary');
+    _smokeFail(failureStage: 'downlink', message: summary);
+  }
+
+  void _smokePassOnce({
+    required String marker,
+    required bool marked,
+    required VoidCallback setMarked,
+    required Map<String, Object?> payload,
+  }) {
+    if (marked) {
+      return;
+    }
+    setMarked();
+    widget.smokeMarkerSink?.passed(marker, payload: payload);
+  }
+
+  void _smokeFail({
+    required String failureStage,
+    required String message,
+    int? errorCode,
+  }) {
+    widget.smokeMarkerSink?.failure(
+      failureStage: failureStage,
+      message: message,
+      errorCode: errorCode,
+    );
+  }
+
+  void _markSmokeVideoRendering({required int generation}) {
+    if (_smokeVideoRenderingMarked || widget.smokeMarkerSink == null) {
+      return;
+    }
+    _smokeVideoRenderingMarked = true;
+    unawaited(() async {
+      final DateTime deadline = DateTime.now().add(const Duration(seconds: 30));
+      while (DateTime.now().isBefore(deadline)) {
+        if (!_acceptGeneration(generation)) {
+          return;
+        }
+        final TiRtcVideoOutputMetricsResult metrics = _session.videoMetrics();
+        final int? firstFrameDurationMs = metrics.snapshot?.startup.firstFrameDurationMs;
+        if (metrics.code == 0 && firstFrameDurationMs != null && firstFrameDurationMs >= 0) {
+          widget.smokeMarkerSink?.passed('smoke_video_rendering', payload: <String, Object?>{
+            'first_frame_duration_ms': firstFrameDurationMs,
+          });
+          return;
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+      _smokeFail(failureStage: 'render_timeout', message: 'first frame metrics timeout');
+    }());
+  }
+
+  void _startSmokeRenderWindow({required int generation}) {
+    if (_smokeRenderWindowStarted || widget.smokeMarkerSink == null) {
+      return;
+    }
+    _smokeRenderWindowStarted = true;
+    unawaited(() async {
+      await Future<void>.delayed(Duration(seconds: widget.smokeRenderWindowSeconds));
+      if (!_acceptGeneration(generation) || _smokeRenderWindowMarked) {
+        return;
+      }
+      final DownlinkMetricsOverlayModel? metrics = _session.readMetricsOverlay(
+        requestedDecoderPreference: widget.configuration.settings.videoDecoderPreference,
+      );
+      if (_smokeAudioErrorCount != 0 ||
+          _smokeVideoErrorCount != 0 ||
+          _session.videoState != TiRtcVideoOutputState.rendering ||
+          metrics == null ||
+          !metrics.debugStatsReady) {
+        _smokeFail(failureStage: 'render_window', message: 'render window ended without healthy output');
+        return;
+      }
+      final DownlinkMetricsOverlayModel markerStats = _lastAvStatsOverlay ?? metrics;
+      final Map<String, Object?> markerPayload = markerStats.debugMarkerPayload(sessionGeneration: generation);
+      _smokeRenderWindowMarked = true;
+      widget.smokeMarkerSink?.passed('smoke_render_window_completed', payload: <String, Object?>{
+        'audio_error_count': _smokeAudioErrorCount,
+        'video_error_count': _smokeVideoErrorCount,
+        'audio_state': _session.audioState.name,
+        'video_state': _session.videoState.name,
+        'audio_input_bitrate_kbps': markerPayload['audio_input_bitrate_kbps'],
+        'video_input_bitrate_kbps': markerPayload['video_input_bitrate_kbps'],
+        'video_render_fps': markerPayload['video_render_fps'],
+        'video_rate_window_duration_ms': markerPayload['video_rate_window_duration_ms'],
+        'runtime_focus_log': markerPayload['runtime_focus_log'],
+      });
+    }());
+  }
+
+  void _handleCommand({
+    required int generation,
+    required int commandId,
+    required Uint8List payload,
+  }) {
+    if (!_acceptGeneration(generation)) {
+      return;
+    }
+    _appendCommandEvent(
+      DemoCommandPanelEvent(
+        direction: DemoCommandEventDirection.received,
+        commandId: commandId,
+        payload: payload,
+        createdAt: DateTime.now(),
+      ),
+    );
+  }
+
+  Future<int> _sendCommand(int commandId, Uint8List payload) async {
+    final int code = _session.sendCommand(commandId: commandId, payload: payload);
+    _appendCommandEvent(
+      DemoCommandPanelEvent(
+        direction: DemoCommandEventDirection.sent,
+        commandId: commandId,
+        payload: payload,
+        resultCode: code,
+        createdAt: DateTime.now(),
+      ),
+    );
+    return code;
+  }
+
+  void _appendCommandEvent(DemoCommandPanelEvent event) {
+    if (!mounted) {
+      _commandEvents = trimDemoCommandEvents(<DemoCommandPanelEvent>[..._commandEvents, event]);
+      _commandSheetSetState = null;
+      return;
+    }
+    setState(() {
+      _commandEvents = trimDemoCommandEvents(<DemoCommandPanelEvent>[..._commandEvents, event]);
+    });
+    _refreshCommandSheet();
+  }
+
+  void _refreshCommandSheet() {
+    _commandSheetSetState?.call(() {});
   }
 
   Future<void> _uploadLogs() async {
@@ -499,48 +663,23 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     setState(() {
       _uploadingLogs = true;
     });
-    TiRtcLogging.i(
-      'flutter_example',
-      'log_upload_requested remoteId=${widget.configuration.remoteId}',
-    );
 
     try {
-      final ({int code, String? logId}) result = await TiRtcLogging.upload();
-      if (!mounted) {
-        return;
-      }
-
-      if (result.code == 0) {
-        final String message =
-            (result.logId?.isNotEmpty ?? false) ? '日志 ID: ${result.logId}\n将此编号提供给开发人员排查' : '日志上传成功。';
-        TiRtcLogging.i(
-          'flutter_example',
-          'log_upload_succeeded logId=${result.logId ?? ''}',
-        );
-        await _showLogUploadResultDialog(
-          title: '日志上传成功',
-          content: message,
-        );
-        return;
-      }
-
-      TiRtcLogging.i(
-        'flutter_example',
-        'log_upload_failed code=${result.code}',
+      final ({int code, String? logId})? result = await _logUploader.upload(
+        remoteId: widget.configuration.remoteId,
+        isActive: () => mounted,
+        showResult: _showLogUploadResultIfMounted,
       );
-      await _showLogUploadResultDialog(
-        title: '日志上传失败',
-        content: 'code ${result.code}。',
-      );
-    } catch (error) {
-      TiRtcLogging.w(
-        'flutter_example',
-        'log_upload_failed unexpected=$error',
-      );
-      if (mounted) {
-        await _showLogUploadResultDialog(
-          title: '日志上传失败',
-          content: '请重试。',
+      if (result != null && result.code == 0 && (result.logId?.isNotEmpty ?? false)) {
+        widget.smokeMarkerSink?.passed('smoke_log_upload_completed', payload: <String, Object?>{
+          'log_id': result.logId,
+          'code': result.code,
+        });
+      } else if (widget.smokeMarkerSink != null) {
+        _smokeFail(
+          failureStage: 'log_upload',
+          message: 'log upload failed',
+          errorCode: result?.code,
         );
       }
     } finally {
@@ -550,6 +689,16 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
         });
       }
     }
+  }
+
+  Future<void> _showLogUploadResultIfMounted({
+    required String title,
+    required String content,
+  }) {
+    if (!mounted) {
+      return Future<void>.value();
+    }
+    return _showLogUploadResultDialog(title: title, content: content);
   }
 
   Future<void> _showLogUploadResultDialog({
@@ -565,13 +714,87 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
   Future<void> _showMetricsExplanationDialog() {
     return context.showNoticeDialog(
       title: '指标说明',
-      content: '连接耗时：从发起连接到连接成功的耗时。\n\n'
-          '首帧耗时：从发起连接到首帧显示的耗时。\n\n'
-          '当前卡顿指标按端上当前判定规则统计，只计入达到阈值的明显卡顿。\n\n'
-          '检测到的卡顿占比：从开始播放到现在，按当前端上判定规则识别出的卡顿总时长，占播放总时长的比例。\n\n'
-          '检测到的卡顿次数：本次播放中，按当前端上判定规则识别出的连续卡顿事件次数。\n\n'
-          '检测到的最长卡顿：本次播放中，按当前端上判定规则识别出的单次最长卡顿时长。',
+      content: downlinkMetricsExplanationContent,
+      contentMaxWidth: 520,
+      contentMaxHeightFactor: 0.68,
+      contentFontSize: 15,
     );
+  }
+
+  Future<void> _showCommandPanel() {
+    return showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      barrierColor: Colors.transparent,
+      backgroundColor: Colors.transparent,
+      builder: (BuildContext sheetContext) {
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setSheetState) {
+            _commandSheetSetState = setSheetState;
+            return Padding(
+              padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+              child: Container(
+                height: MediaQuery.sizeOf(context).height / 2,
+                decoration: const BoxDecoration(
+                  color: ExampleTheme.background,
+                  borderRadius: BorderRadius.only(
+                    topLeft: Radius.circular(16),
+                    topRight: Radius.circular(16),
+                  ),
+                ),
+                child: Column(
+                  children: <Widget>[
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                      child: Row(
+                        children: <Widget>[
+                          const Expanded(
+                            child: Text(
+                              '发送命令',
+                              style: TextStyle(
+                                color: ExampleTheme.textPrimary,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: () => Navigator.of(sheetContext).pop(),
+                            icon: const Icon(
+                              Icons.close_rounded,
+                              color: ExampleTheme.textHint,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Divider(height: 1, color: ExampleTheme.inputBorder),
+                    Expanded(
+                      child: DemoCommandPanel(
+                        connected: _commandConnected,
+                        events: _commandEvents,
+                        onSendCommand: (int commandId, Uint8List payload) async {
+                          final int code = await _sendCommand(commandId, payload);
+                          if (sheetContext.mounted) {
+                            setSheetState(() {});
+                          }
+                          return code;
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    ).whenComplete(() {
+      if (mounted) {
+        _commandSheetSetState = null;
+      }
+    });
   }
 
   @override
@@ -579,6 +802,7 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     final bool connecting = _downlinkState == _DownlinkViewState.connecting;
     final bool playing = _downlinkState == _DownlinkViewState.playing;
     return Scaffold(
+      key: DemoWidgetKeys.playerPage,
       backgroundColor: ExampleTheme.background,
       appBar: AppBar(
         title: Text(
@@ -590,70 +814,38 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
           ),
         ),
         actions: <Widget>[
-          Container(
-            margin: const EdgeInsets.only(right: 16, top: 8, bottom: 8),
-            child: OutlinedButton(
-              style: OutlinedButton.styleFrom(
-                foregroundColor: ExampleTheme.primary,
-                backgroundColor: Colors.transparent,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
-                ),
-                minimumSize: const Size(84, 28),
-                side: const BorderSide(
-                  color: ExampleTheme.primary,
-                  width: 1,
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                elevation: 0,
-                shadowColor: Colors.transparent,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-              onPressed: _uploadingLogs ? null : _uploadLogs,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  if (_uploadingLogs) ...<Widget>[
-                    SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        valueColor: AlwaysStoppedAnimation<Color>(
-                          ExampleTheme.primary.withAlpha(214),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                  ],
-                  Text(
-                    _uploadingLogs ? '上传中' : '上传日志',
-                    style: const TextStyle(fontSize: 12),
-                    textAlign: TextAlign.center,
-                  ),
-                ],
-              ),
-            ),
+          PlayerCommandButton(
+            key: DemoWidgetKeys.playerCommandButton,
+            onOpenCommands: _showCommandPanel,
+          ),
+          PlayerLogUploadButton(
+            key: DemoWidgetKeys.playerLogUploadButton,
+            uploadingLogs: _uploadingLogs,
+            onUploadLogs: _uploadLogs,
           ),
         ],
       ),
       body: Stack(
         children: <Widget>[
-          Positioned.fill(child: _buildVideoStage()),
-          Positioned.fill(child: _buildOverlayGradient()),
+          Positioned.fill(
+            child: DownlinkVideoStage(
+              videoView: _session.buildVideoView(),
+              showStageOverlay: _downlinkState != _DownlinkViewState.playing,
+              stageStatusLabel: _stageStatusLabel,
+              indicatorMode: _centerIndicatorMode,
+            ),
+          ),
+          const Positioned.fill(child: DownlinkOverlayGradient()),
           if (_metricsOverlay != null)
-            SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.only(top: 18, left: 18),
-                child: Align(
-                  alignment: Alignment.topLeft,
-                  child: DownlinkMetricsOverlay(
-                    metrics: _metricsOverlay!,
-                    onShowExplanation: _showMetricsExplanationDialog,
-                  ),
+            Positioned(
+              top: 18,
+              left: 18,
+              right: 18,
+              child: SafeArea(
+                bottom: false,
+                child: DownlinkMetricsOverlay(
+                  metrics: _metricsOverlay!,
+                  onShowExplanation: _showMetricsExplanationDialog,
                 ),
               ),
             ),
@@ -667,46 +859,10 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
                   const Spacer(),
                   Align(
                     alignment: Alignment.bottomRight,
-                    child: FilledButton.icon(
-                      onPressed: connecting
-                          ? null
-                          : () {
-                              if (playing) {
-                                unawaited(
-                                  _stopDownlink(
-                                    reason: 'manual_stop',
-                                    clearIntent: true,
-                                    nextStatusSummary: 'Downlink stopped.',
-                                  ),
-                                );
-                              } else {
-                                unawaited(
-                                  _startDownlink(reason: 'manual_start'),
-                                );
-                              }
-                            },
-                      style: FilledButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 18,
-                          vertical: 18,
-                        ),
-                        backgroundColor: playing ? Colors.redAccent.shade200 : ExampleTheme.primary,
-                      ),
-                      icon: connecting
-                          ? SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
-                              ),
-                            )
-                          : Icon(
-                              playing ? Icons.stop_circle_outlined : Icons.play_circle_fill_rounded,
-                            ),
-                      label: Text(
-                        connecting ? 'Connecting' : (playing ? 'Stop' : 'Connect'),
-                      ),
+                    child: DownlinkControlButton(
+                      connecting: connecting,
+                      playing: playing,
+                      onPressed: _toggleDownlink,
                     ),
                   ),
                 ],
@@ -718,24 +874,19 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     );
   }
 
-  Widget _buildVideoStage() {
-    final bool showStageOverlay = _downlinkState != _DownlinkViewState.playing;
-    return DecoratedBox(
-      decoration: const BoxDecoration(color: ExampleTheme.videoBackground),
-      child: Stack(
-        fit: StackFit.expand,
-        children: <Widget>[
-          Center(child: _videoOutput.view()),
-          if (showStageOverlay)
-            Center(
-              child: DownlinkCenterLoading(
-                label: _stageStatusLabel,
-                mode: _centerIndicatorMode,
-              ),
-            ),
-        ],
-      ),
-    );
+  void _toggleDownlink() {
+    if (_downlinkState == _DownlinkViewState.playing) {
+      unawaited(
+        _stopDownlink(
+          reason: 'manual_stop',
+          clearIntent: true,
+          nextStatusSummary: 'Downlink stopped.',
+        ),
+      );
+      return;
+    }
+
+    unawaited(_startDownlink(reason: 'manual_start'));
   }
 
   DownlinkCenterIndicatorMode get _centerIndicatorMode {
@@ -752,23 +903,5 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     }
 
     return DownlinkCenterIndicatorMode.loading;
-  }
-
-  Widget _buildOverlayGradient() {
-    return IgnorePointer(
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: <Color>[
-              Colors.black.withAlpha(117),
-              Colors.transparent,
-              Colors.black.withAlpha(153),
-            ],
-          ),
-        ),
-      ),
-    );
   }
 }

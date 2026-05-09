@@ -1,3 +1,4 @@
+import AVFoundation
 import Cocoa
 import FlutterMacOS
 
@@ -27,7 +28,158 @@ class MainFlutterWindow: NSWindow {
     }
 
     RegisterGeneratedPlugins(registry: flutterViewController)
+    registerPreferencesChannel(binaryMessenger: flutterViewController.engine.binaryMessenger)
+    registerPermissionsChannel(binaryMessenger: flutterViewController.engine.binaryMessenger)
 
     super.awakeFromNib()
+  }
+
+  private func registerPermissionsChannel(binaryMessenger: FlutterBinaryMessenger) {
+    let channel = FlutterMethodChannel(
+      name: "tirtc_av_kit_example/permissions",
+      binaryMessenger: binaryMessenger
+    )
+    channel.setMethodCallHandler { call, result in
+      switch call.method {
+      case "checkLocalMediaPermissions":
+        result(self.localMediaPermissionsGranted())
+      case "requestLocalMediaPermissions":
+        self.requestLocalMediaPermissions(result: result)
+      case "requestLocalNetworkPermission":
+        result(true)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+  }
+
+  private func registerPreferencesChannel(binaryMessenger: FlutterBinaryMessenger) {
+    let channel = FlutterMethodChannel(
+      name: "tirtc_av_kit_example/preferences",
+      binaryMessenger: binaryMessenger
+    )
+    channel.setMethodCallHandler { call, result in
+      switch call.method {
+      case "putPreferencesInt":
+        guard let (key, value) = self.intArguments(
+          call.arguments,
+          valueKey: "value",
+          result: result
+        ) else {
+          return
+        }
+        UserDefaults.standard.set(value, forKey: key)
+        result(nil)
+      case "getPreferencesInt":
+        guard let (key, defaultValue) = self.intArguments(
+          call.arguments,
+          valueKey: "defaultValue",
+          result: result
+        ) else {
+          return
+        }
+        if UserDefaults.standard.object(forKey: key) == nil {
+          result(defaultValue)
+          return
+        }
+        result(UserDefaults.standard.integer(forKey: key))
+      case "putPreferencesString":
+        guard let (key, value) = self.stringArguments(
+          call.arguments,
+          valueKey: "value",
+          result: result
+        ) else {
+          return
+        }
+        UserDefaults.standard.set(value, forKey: key)
+        result(nil)
+      case "getPreferencesString":
+        guard let (key, defaultValue) = self.stringArguments(
+          call.arguments,
+          valueKey: "defaultValue",
+          result: result
+        ) else {
+          return
+        }
+        result(UserDefaults.standard.string(forKey: key) ?? defaultValue)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+  }
+
+  private func intArguments(
+    _ rawArguments: Any?,
+    valueKey: String,
+    result: FlutterResult
+  ) -> (String, Int)? {
+    guard let arguments = rawArguments as? [String: Any],
+          let key = arguments["key"] as? String,
+          key.hasPrefix("tirtc_av_kit_example."),
+          let value = arguments[valueKey] as? Int else {
+      result(FlutterError(
+        code: "INVALID_ARGUMENT",
+        message: "key and \(valueKey) are required",
+        details: nil
+      ))
+      return nil
+    }
+    return (key, value)
+  }
+
+  private func stringArguments(
+    _ rawArguments: Any?,
+    valueKey: String,
+    result: FlutterResult
+  ) -> (String, String)? {
+    guard let arguments = rawArguments as? [String: Any],
+          let key = arguments["key"] as? String,
+          key.hasPrefix("tirtc_av_kit_example."),
+          let value = arguments[valueKey] as? String else {
+      result(FlutterError(
+        code: "INVALID_ARGUMENT",
+        message: "key and \(valueKey) are required",
+        details: nil
+      ))
+      return nil
+    }
+    return (key, value)
+  }
+
+  private func localMediaPermissionsGranted() -> Bool {
+    AVCaptureDevice.authorizationStatus(for: .video) == .authorized &&
+      AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+  }
+
+  private func requestLocalMediaPermissions(result: @escaping FlutterResult) {
+    requestCaptureAccessIfNeeded(for: .video) { videoGranted in
+      guard videoGranted else {
+        result(false)
+        return
+      }
+      self.requestCaptureAccessIfNeeded(for: .audio) { audioGranted in
+        result(audioGranted)
+      }
+    }
+  }
+
+  private func requestCaptureAccessIfNeeded(
+    for mediaType: AVMediaType,
+    completion: @escaping (Bool) -> Void
+  ) {
+    switch AVCaptureDevice.authorizationStatus(for: mediaType) {
+    case .authorized:
+      completion(true)
+    case .notDetermined:
+      AVCaptureDevice.requestAccess(for: mediaType) { granted in
+        DispatchQueue.main.async {
+          completion(granted)
+        }
+      }
+    case .denied, .restricted:
+      completion(false)
+    @unknown default:
+      completion(false)
+    }
   }
 }

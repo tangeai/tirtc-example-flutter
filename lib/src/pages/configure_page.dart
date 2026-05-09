@@ -1,13 +1,19 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:tirtc_av_kit/tirtc_av_kit.dart';
 
-import '../app_theme.dart';
+import '../device/device_configure_page.dart';
 import '../demo_configuration.dart';
+import '../demo_permissions.dart';
+import '../demo_test_hooks.dart';
+import '../settings/demo_example_settings_store.dart';
+import '../widgets/configure_page_widgets.dart';
 import 'player_page.dart';
 import 'qr_scanner_page.dart';
+import 'settings_page.dart';
 
 class DemoConfigurePage extends StatefulWidget {
   const DemoConfigurePage({super.key});
@@ -17,9 +23,6 @@ class DemoConfigurePage extends StatefulWidget {
 }
 
 class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindingObserver {
-  static const MethodChannel _permissionChannel = MethodChannel(
-    'tirtc_av_kit_example/permissions',
-  );
   static const SystemUiOverlayStyle _configurePageOverlayStyle = SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
     statusBarIconBrightness: Brightness.dark,
@@ -33,11 +36,13 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
   final TextEditingController _audioStreamIdController = TextEditingController();
   final TextEditingController _videoStreamIdController = TextEditingController();
   final TextEditingController _tokenController = TextEditingController();
+  final DemoExamplePermissions _permissions = const DemoExamplePermissions();
+  final DemoExampleSettingsStore _settingsStore = const DemoExampleSettingsStore();
 
   bool _submitted = false;
   bool _startingPlayer = false;
+  DemoExampleSettings _settings = const DemoExampleSettings();
   bool _iosLocalNetworkPermissionRequested = false;
-  bool _iosLocalNetworkPermissionScheduled = false;
 
   bool get _scanSupported => Platform.isAndroid || Platform.isIOS;
 
@@ -45,9 +50,9 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    unawaited(_loadSettingsSnapshot(reason: 'initial'));
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _applyConfigurePageSystemOverlayStyle();
-      _scheduleIosLocalNetworkPermissionRequestIfNeeded();
     });
   }
 
@@ -70,254 +75,52 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: _configurePageOverlayStyle,
       child: Scaffold(
-        body: GestureDetector(
-          behavior: HitTestBehavior.translucent,
+        body: ConfigurePageBackground(
+          showBackdropOrbs: showBackdropOrbs,
           onTap: _dismissKeyboard,
-          child: Stack(
-            children: <Widget>[
-              Positioned.fill(
-                child: DecoratedBox(
-                  decoration: ExampleTheme.pageBackgroundDecoration,
-                ),
-              ),
-              if (showBackdropOrbs)
-                const Positioned(
-                  top: -120,
-                  right: -90,
-                  child: _DecorativeOrb(size: 260, color: ExampleTheme.overlayGlow),
-                ),
-              if (showBackdropOrbs)
-                const Positioned(
-                  bottom: -110,
-                  left: -70,
-                  child: _DecorativeOrb(size: 220, color: ExampleTheme.overlayShadow),
-                ),
-              SafeArea(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
-                  child: Center(
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 460),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: <Widget>[
-                          _buildHeader(context),
-                          const SizedBox(height: 20),
-                          Container(
-                            padding: const EdgeInsets.all(16),
-                            decoration: BoxDecoration(
-                              color: ExampleTheme.surface.withAlpha(224),
-                              borderRadius: BorderRadius.circular(30),
-                            ),
-                            child: Form(
-                              key: _formKey,
-                              autovalidateMode: _submitted ? AutovalidateMode.always : AutovalidateMode.disabled,
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: <Widget>[
-                                  _buildAppIdField(),
-                                  const SizedBox(height: 16),
-                                  _buildEndpointField(),
-                                  const SizedBox(height: 16),
-                                  _buildRemoteIdField(),
-                                  const SizedBox(height: 16),
-                                  _buildStreamIdRow(),
-                                  const SizedBox(height: 16),
-                                  _buildTokenField(),
-                                  const SizedBox(height: 20),
-                                  FilledButton(
-                                    onPressed: _startingPlayer ? null : _startPlaying,
-                                    child: _buildEnterPlayerButtonLabel(),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ],
+          child: SafeArea(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 460),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: <Widget>[
+                      ConfigureHeader(
+                        scanSupported: _scanSupported,
+                        startingPlayer: _startingPlayer,
+                        onOpenSettings: _openSettings,
+                        onScanToken: _scanToken,
                       ),
-                    ),
+                      const SizedBox(height: 20),
+                      ConfigureForm(
+                        formKey: _formKey,
+                        submitted: _submitted,
+                        startingPlayer: _startingPlayer,
+                        appIdController: _appIdController,
+                        endpointController: _endpointController,
+                        remoteIdController: _remoteIdController,
+                        audioStreamIdController: _audioStreamIdController,
+                        videoStreamIdController: _videoStreamIdController,
+                        tokenController: _tokenController,
+                        validateEndpoint: _validateEndpoint,
+                        validateStreamId: _validateStreamId,
+                        onStartPlaying: _startPlaying,
+                      ),
+                      const SizedBox(height: 14),
+                      ConfigureDeviceEntryLink(
+                        startingPlayer: _startingPlayer,
+                        onOpenDeviceServer: _openDeviceServer,
+                      ),
+                    ],
                   ),
                 ),
               ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildHeader(BuildContext context) {
-    final TextStyle baseStyle = Theme.of(context).textTheme.headlineLarge ?? const TextStyle();
-    final TextStyle titleStyle = baseStyle.copyWith(
-      fontSize: 22,
-      color: ExampleTheme.brandText,
-      fontWeight: FontWeight.w700,
-      letterSpacing: -0.4,
-      height: 1.0,
-    );
-
-    return Row(
-      children: <Widget>[
-        Expanded(
-          child: Text(
-            'Ti RTC',
-            style: titleStyle,
-          ),
-        ),
-        if (_scanSupported)
-          TextButton.icon(
-            onPressed: _startingPlayer ? null : _scanToken,
-            style: TextButton.styleFrom(
-              foregroundColor: _startingPlayer ? ExampleTheme.textHint : ExampleTheme.primary,
-              backgroundColor: ExampleTheme.surface.withAlpha(214),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              minimumSize: const Size(0, 40),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(999),
-                side: BorderSide(
-                  color: (_startingPlayer ? ExampleTheme.textHint : ExampleTheme.primary).withAlpha(64),
-                ),
-              ),
-            ),
-            icon: const Icon(Icons.qr_code_scanner_rounded, size: 18),
-            label: const Text(
-              '扫一扫',
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
             ),
           ),
-      ],
-    );
-  }
-
-  Widget _buildEnterPlayerButtonLabel() {
-    if (!_startingPlayer) {
-      return const Text('进入播放页');
-    }
-
-    return const Row(
-      mainAxisSize: MainAxisSize.min,
-      children: <Widget>[
-        SizedBox(
-          width: 16,
-          height: 16,
-          child: CircularProgressIndicator(
-            strokeWidth: 2,
-            valueColor: AlwaysStoppedAnimation<Color>(ExampleTheme.foreground),
-          ),
         ),
-        SizedBox(width: 10),
-        Text('初始化中'),
-      ],
-    );
-  }
-
-  Widget _buildEndpointField() {
-    return TextFormField(
-      controller: _endpointController,
-      enabled: !_startingPlayer,
-      keyboardType: TextInputType.url,
-      textInputAction: TextInputAction.next,
-      style: const TextStyle(fontSize: 13),
-      decoration: const InputDecoration(
-        labelText: 'endpoint',
-        hintText: '接入的云端环境，留空则使用默认环境。',
       ),
-      validator: _validateEndpoint,
-    );
-  }
-
-  Widget _buildAppIdField() {
-    return TextFormField(
-      controller: _appIdController,
-      enabled: !_startingPlayer,
-      textInputAction: TextInputAction.next,
-      style: const TextStyle(fontSize: 13),
-      decoration: const InputDecoration(
-        labelText: 'app_id',
-        hintText: 'TiRTC 应用标识，进入播放页前必须提供。',
-      ),
-      validator: (String? value) {
-        if ((value ?? '').trim().isEmpty) {
-          return 'app_id 为必填项。';
-        }
-        return null;
-      },
-    );
-  }
-
-  Widget _buildRemoteIdField() {
-    return TextFormField(
-      controller: _remoteIdController,
-      enabled: !_startingPlayer,
-      textInputAction: TextInputAction.next,
-      style: const TextStyle(fontSize: 13),
-      decoration: const InputDecoration(
-        labelText: 'remote_id',
-        hintText: '待连接的远端目标 ID',
-      ),
-      validator: (String? value) {
-        if ((value ?? '').trim().isEmpty) {
-          return 'remote_id 为必填项。';
-        }
-        return null;
-      },
-    );
-  }
-
-  Widget _buildStreamIdRow() {
-    return Row(
-      children: <Widget>[
-        Expanded(
-          child: TextFormField(
-            controller: _audioStreamIdController,
-            enabled: !_startingPlayer,
-            keyboardType: TextInputType.number,
-            textInputAction: TextInputAction.next,
-            style: const TextStyle(fontSize: 13),
-            decoration: const InputDecoration(
-              labelText: 'audio_stream_id',
-              hintText: '音频流 ID，默认 10',
-            ),
-            validator: _validateStreamId,
-          ),
-        ),
-        const SizedBox(width: 16),
-        Expanded(
-          child: TextFormField(
-            controller: _videoStreamIdController,
-            enabled: !_startingPlayer,
-            keyboardType: TextInputType.number,
-            textInputAction: TextInputAction.next,
-            style: const TextStyle(fontSize: 13),
-            decoration: const InputDecoration(
-              labelText: 'video_stream_id',
-              hintText: '视频流 ID，默认 11',
-            ),
-            validator: _validateStreamId,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildTokenField() {
-    return TextFormField(
-      controller: _tokenController,
-      enabled: !_startingPlayer,
-      minLines: 3,
-      maxLines: 5,
-      style: const TextStyle(fontSize: 13),
-      decoration: const InputDecoration(
-        labelText: 'token',
-        hintText: '进行一次连接所需的有效 token',
-        alignLabelWithHint: true,
-      ),
-      validator: (String? value) {
-        if ((value ?? '').trim().isEmpty) {
-          return 'token 为必填项。';
-        }
-        return null;
-      },
     );
   }
 
@@ -433,6 +236,7 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
         fallback: DemoDownlinkConfiguration.defaultVideoStreamId,
       ),
       token: _tokenController.text.trim(),
+      settings: _settings,
     );
   }
 
@@ -468,7 +272,7 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
       TiRtcInitOptions(
         appId: configuration.appId,
         endpoint: configuration.endpoint,
-        consoleLogEnabled: true,
+        consoleLogEnabled: configuration.settings.consoleLogEnabled,
       ),
     );
     if (!mounted) {
@@ -505,7 +309,14 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
       );
       await Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
-          builder: (BuildContext context) => DemoPlayerPage(configuration: configuration),
+          builder: (BuildContext context) {
+            final DemoExampleSmokeHooks? smokeHooks = DemoExampleSmokeHooks.current;
+            return DemoPlayerPage(
+              configuration: configuration,
+              smokeMarkerSink: smokeHooks?.markerSink,
+              smokeRenderWindowSeconds: smokeHooks?.renderWindowSeconds ?? 30,
+            );
+          },
         ),
       );
       _dismissKeyboard();
@@ -524,6 +335,52 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
     }
   }
 
+  Future<void> _openSettings() async {
+    _dismissKeyboard();
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (BuildContext context) => DemoSettingsPage(
+          initialSettings: _settings,
+          settingsStore: _settingsStore,
+        ),
+      ),
+    );
+    if (!mounted) {
+      return;
+    }
+    await _loadSettingsSnapshot(reason: 'settings_return');
+    _applyConfigurePageSystemOverlayStyle();
+  }
+
+  Future<void> _openDeviceServer() async {
+    _dismissKeyboard();
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (BuildContext context) => const DemoDeviceServerConfigurePage(),
+      ),
+    );
+    if (!mounted) {
+      return;
+    }
+    _applyConfigurePageSystemOverlayStyle();
+  }
+
+  Future<void> _loadSettingsSnapshot({required String reason}) async {
+    final DemoExampleSettings settings = await _settingsStore.load();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _settings = settings;
+    });
+    TiRtcLogging.i(
+      'flutter_example',
+      'example_settings_loaded reason=$reason '
+          'video_decoder_preference=${settings.videoDecoderPreference} '
+          'console_log_enabled=${settings.consoleLogEnabled}',
+    );
+  }
+
   Future<void> _requestIosLocalNetworkPermissionIfNeeded() async {
     if (!Platform.isIOS || _iosLocalNetworkPermissionRequested) {
       return;
@@ -531,48 +388,14 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
 
     _iosLocalNetworkPermissionRequested = true;
     TiRtcLogging.i('flutter_example', 'ios_local_network_permission_request_started');
-    try {
-      await _permissionChannel.invokeMethod<bool>('requestLocalNetworkPermission');
-      TiRtcLogging.i('flutter_example', 'ios_local_network_permission_request_finished');
-    } on PlatformException catch (error) {
-      TiRtcLogging.w(
-        'flutter_example',
-        'ios_local_network_permission_request_failed '
-            'code=${error.code} message=${error.message ?? ''}',
-      );
-    }
-  }
-
-  void _scheduleIosLocalNetworkPermissionRequestIfNeeded() {
-    if (!Platform.isIOS || _iosLocalNetworkPermissionRequested || _iosLocalNetworkPermissionScheduled || !mounted) {
-      return;
-    }
-
-    if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) {
-      return;
-    }
-
-    _iosLocalNetworkPermissionScheduled = true;
-    Future<void>.delayed(const Duration(milliseconds: 600), () async {
-      _iosLocalNetworkPermissionScheduled = false;
-      if (!mounted) {
-        return;
-      }
-      await _requestIosLocalNetworkPermissionIfNeeded();
-    });
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _scheduleIosLocalNetworkPermissionRequestIfNeeded();
+    await _permissions.requestLocalNetworkPermissionIfNeeded();
+    TiRtcLogging.i('flutter_example', 'ios_local_network_permission_request_finished');
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _applyConfigurePageSystemOverlayStyle();
-      _scheduleIosLocalNetworkPermissionRequestIfNeeded();
     }
   }
 
@@ -598,28 +421,5 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(message)));
-  }
-}
-
-class _DecorativeOrb extends StatelessWidget {
-  const _DecorativeOrb({required this.size, required this.color});
-
-  final double size;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return IgnorePointer(
-      child: Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          gradient: RadialGradient(
-            colors: <Color>[color, color.withAlpha(0)],
-          ),
-        ),
-      ),
-    );
   }
 }

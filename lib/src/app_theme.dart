@@ -40,7 +40,7 @@ final class ExampleTheme {
           fontSize: 34,
           fontWeight: FontWeight.w700,
           color: textPrimary,
-          letterSpacing: -0.8,
+          letterSpacing: 0,
         ),
         headlineSmall: TextStyle(
           fontSize: 24,

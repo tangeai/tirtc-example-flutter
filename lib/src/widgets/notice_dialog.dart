@@ -8,17 +8,25 @@ class NoticeDialog extends StatelessWidget {
     required this.title,
     required this.content,
     this.confirmLabel = '确定',
+    this.contentMaxWidth,
+    this.contentMaxHeightFactor = 0.56,
+    this.contentFontSize,
     this.onConfirm,
   });
 
   final String title;
   final String content;
   final String confirmLabel;
+  final double? contentMaxWidth;
+  final double contentMaxHeightFactor;
+  final double? contentFontSize;
   final VoidCallback? onConfirm;
 
   @override
   Widget build(BuildContext context) {
     final TextTheme textTheme = Theme.of(context).textTheme;
+    final Size screenSize = MediaQuery.sizeOf(context);
+    final double maxContentHeight = screenSize.height * contentMaxHeightFactor;
 
     return AlertDialog(
       backgroundColor: ExampleTheme.surface.withAlpha(250),
@@ -37,11 +45,20 @@ class NoticeDialog extends StatelessWidget {
           fontWeight: FontWeight.w700,
         ),
       ),
-      content: Text(
-        content,
-        style: textTheme.bodyMedium?.copyWith(
-          color: ExampleTheme.textSecondary,
-          height: 1.6,
+      content: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: contentMaxWidth ?? 360,
+          maxHeight: maxContentHeight,
+        ),
+        child: SingleChildScrollView(
+          child: Text(
+            content,
+            style: textTheme.bodyMedium?.copyWith(
+              color: ExampleTheme.textSecondary,
+              fontSize: contentFontSize,
+              height: 1.6,
+            ),
+          ),
         ),
       ),
       actions: <Widget>[
@@ -71,6 +88,9 @@ extension NoticeDialogExtension on BuildContext {
     required String title,
     required String content,
     String confirmLabel = '确定',
+    double? contentMaxWidth,
+    double contentMaxHeightFactor = 0.56,
+    double? contentFontSize,
     VoidCallback? onConfirm,
   }) {
     return showDialog<void>(
@@ -81,6 +101,9 @@ extension NoticeDialogExtension on BuildContext {
           title: title,
           content: content,
           confirmLabel: confirmLabel,
+          contentMaxWidth: contentMaxWidth,
+          contentMaxHeightFactor: contentMaxHeightFactor,
+          contentFontSize: contentFontSize,
           onConfirm: onConfirm,
         );
       },

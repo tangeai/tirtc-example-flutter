@@ -8,7 +8,7 @@ plugins {
 android {
     namespace = "com.tange.ai.tirtc_av_kit_example"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = "28.0.12674087"
+    ndkVersion = "28.2.13676358"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -41,6 +41,12 @@ android {
         debug {
             ndk.abiFilters.clear()
             ndk.abiFilters.addAll(listOf("arm64-v8a"))
+        }
+    }
+
+    packaging {
+        jniLibs {
+            excludes += setOf("lib/armeabi-v7a/**", "lib/x86/**")
         }
     }
 }

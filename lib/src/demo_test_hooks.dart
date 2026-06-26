@@ -1,6 +1,7 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:typed_data';
+
+import 'demo_echo_command.dart';
 
 abstract interface class DemoAutomationMarkerSink {
   void passed(String marker, {Map<String, Object?> payload = const <String, Object?>{}});
@@ -34,8 +35,8 @@ final class DemoExampleSmokeHooks {
   final int renderWindowSeconds;
 }
 
-const int automationCommandEchoId = 0xffffffff;
-const String automationCommandEchoPayload = 'echo';
+const int automationCommandEchoId = demoEchoCommandId;
+const String automationCommandEchoPayload = demoEchoCommandPayloadText;
 const Duration automationCommandEchoTimeout = Duration(seconds: 15);
 const int automationCommandSendRetryLimit = 120;
 const Duration automationCommandSendRetryInterval = Duration(milliseconds: 100);
@@ -96,7 +97,7 @@ final class AutomationCommandProbeResult {
 final class AutomationCommandProbe {
   AutomationCommandProbe()
       : payloadText = automationCommandEchoPayload,
-        _payload = Uint8List.fromList(utf8.encode(automationCommandEchoPayload));
+        _payload = demoEchoCommandPayload();
 
   final String payloadText;
   final Uint8List _payload;

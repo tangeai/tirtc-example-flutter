@@ -10,16 +10,51 @@ import 'package:tirtc_av_kit_example/src/demo_configuration.dart';
 import 'package:tirtc_av_kit_example/src/demo_device_server_controller.dart';
 import 'package:tirtc_av_kit_example/src/demo_downlink_session.dart';
 import 'package:tirtc_av_kit_example/src/demo_downlink_support.dart';
-import 'package:tirtc_av_kit_example/src/demo_video_attach_flow.dart';
+import 'package:tirtc_av_kit_example/src/demo_stream_message.dart';
+import 'package:tirtc_av_kit_example/src/demo_test_hooks.dart' show DemoAutomationMarkerSink;
 import 'package:tirtc_av_kit_example/src/pages/configure_page.dart';
 import 'package:tirtc_av_kit_example/src/settings/demo_example_settings_store.dart';
 import 'package:tirtc_av_kit_example/src/widgets/notice_dialog.dart';
 import 'package:tirtc_av_kit_example/src/widgets/downlink_center_loading.dart';
 import 'package:tirtc_av_kit_example/src/widgets/downlink_metrics_overlay.dart';
+import 'package:tirtc_av_kit_example/src/widgets/downlink_metrics_overlay_markers.dart';
+import 'package:tirtc_av_kit_example/src/widgets/downlink_metrics_overlay_model.dart';
 import 'package:tirtc_av_kit_example/src/widgets/player_page_widgets.dart';
 import 'av_contract_command_probe.dart';
 import 'av_contract_marker_sink.dart';
 import 'av_contract_payload.dart';
+
+final class _ScenarioMarkerSink implements DemoAutomationMarkerSink {
+  _ScenarioMarkerSink({
+    required this.delegate,
+    required this.payload,
+  });
+
+  final DemoAutomationMarkerSink delegate;
+  final AutomationPayload payload;
+
+  @override
+  void passed(String marker, {Map<String, Object?> payload = const <String, Object?>{}}) {
+    if (marker == 'stream_message_sent') {
+      delegate.passed(marker, payload: <String, Object?>{
+        'scenario': this.payload.scenario,
+        'pairing_id': this.payload.pairingId,
+        ...payload,
+      });
+      return;
+    }
+    delegate.passed(marker, payload: payload);
+  }
+
+  @override
+  void failure({
+    required String failureStage,
+    required String message,
+    int? errorCode,
+  }) {
+    delegate.failure(failureStage: failureStage, message: message, errorCode: errorCode);
+  }
+}
 
 final class AutomationPage extends StatefulWidget {
   const AutomationPage({
@@ -57,6 +92,9 @@ class _AutomationPageState extends State<AutomationPage> {
   bool _videoRenderingVisible = false;
   int _audioErrorCount = 0;
   int _videoErrorCount = 0;
+  bool _commandEchoMarked = false;
+  bool _streamMessageMarked = false;
+  Map<String, Object?>? _pendingStreamMessageMarkerPayload;
   Size? _renderSize;
 
   Completer<void>? _connected;
@@ -100,6 +138,7 @@ class _AutomationPageState extends State<AutomationPage> {
 
     final DemoExampleSettings settings = await _settingsStore.load(
       testVideoDecoderPreference: payload.videoDecoderPreference,
+      testOutputBufferPolicy: payload.bufferPolicy,
     );
     _markerSink.passed('payload_applied', payload: payload.markerPayload());
     if (payload.scenario == AutomationPayload.scenarioFlutterDeviceServerToCliClient) {
@@ -166,6 +205,39 @@ class _AutomationPageState extends State<AutomationPage> {
       'remote_id': payload.remoteId,
     });
 
+    final TiRtcOutputBufferStrategy outputBufferStrategy = _outputBufferStrategy(settings);
+    final int audioOptionsCode = _session!.setAudioOptions(bufferStrategy: outputBufferStrategy);
+    if (audioOptionsCode != 0) {
+      _fail(
+        failureStage: 'audio_buffer_options',
+        message: 'audio output buffer options failed',
+        errorCode: audioOptionsCode,
+      );
+      return;
+    }
+    final int videoOptionsCode = _session!.setVideoOptions(
+      decoderPreference: settings.videoDecoderPreference,
+      bufferStrategy: outputBufferStrategy,
+    );
+    if (videoOptionsCode != 0) {
+      _fail(
+        failureStage: 'video_decoder_preference',
+        message: 'video decoder preference apply failed',
+        errorCode: videoOptionsCode,
+      );
+      return;
+    }
+    _markerSink.passed('buffer_policy_configured', payload: <String, Object?>{
+      'scenario': payload.scenario,
+      'buffer_policy': settings.outputBufferPolicy,
+      'audio_strategy': _outputBufferStrategyName(outputBufferStrategy),
+      'video_strategy': _outputBufferStrategyName(outputBufferStrategy),
+      'audio_max_watermark_ms': null,
+      'video_max_watermark_ms': null,
+      'audio_configure_code': audioOptionsCode,
+      'video_set_options_code': videoOptionsCode,
+    });
+
     final int audioAttachCode = _session!.attachAudio(streamId: payload.audioStreamId);
     if (audioAttachCode != 0) {
       _fail(
@@ -188,24 +260,22 @@ class _AutomationPageState extends State<AutomationPage> {
       'audio_error_count': _audioErrorCount,
     });
 
-    final DemoVideoAttachResult videoAttachResult = applyVideoDecoderPreferenceThenAttach(
-      sessionGeneration: _automationSessionGeneration,
-      videoStreamId: payload.videoStreamId,
-      requestedPreference: settings.videoDecoderPreference,
-      applyOptions: () => _session!.setVideoOptions(decoderPreference: settings.videoDecoderPreference),
-      attachVideo: () => _session!.attachVideo(streamId: payload.videoStreamId),
-      log: (String message) => TiRtcLogging.i('flutter_example', message),
+    TiRtcLogging.i(
+      'flutter_example',
+      'event=example_video_attach_requested '
+          'session_generation=$_automationSessionGeneration '
+          'video_stream_id=${payload.videoStreamId} '
+          'requested_preference=${settings.videoDecoderPreference}',
     );
-    if (!videoAttachResult.optionsApplied) {
-      _fail(
-        failureStage: 'video_decoder_preference',
-        message: 'video decoder preference apply failed',
-        errorCode: videoAttachResult.optionsCode,
-      );
-      return;
-    }
-
-    final int videoAttachCode = videoAttachResult.attachCode ?? 0;
+    final int videoAttachCode = _session!.attachVideo(streamId: payload.videoStreamId);
+    TiRtcLogging.i(
+      'flutter_example',
+      'event=example_video_attach_result '
+          'session_generation=$_automationSessionGeneration '
+          'video_stream_id=${payload.videoStreamId} '
+          'requested_preference=${settings.videoDecoderPreference} '
+          'code=$videoAttachCode',
+    );
     if (videoAttachCode != 0) {
       _fail(
         failureStage: 'video_attach',
@@ -258,15 +328,23 @@ class _AutomationPageState extends State<AutomationPage> {
     }
     _markerSink.passed(
       'debug_stats_ready',
-      payload: debugStats.debugMarkerPayload(sessionGeneration: _automationSessionGeneration),
+      payload: <String, Object?>{
+        ...debugStats.debugMarkerPayload(sessionGeneration: _automationSessionGeneration),
+        'requested_output_buffer_policy': settings.outputBufferPolicy,
+        'requested_output_buffer_max_watermark_ms': null,
+        'buffer_policy_ok': true,
+      },
     );
     if (!await _runCommandProbe()) {
       return;
     }
+    _markStreamMessageReceivedIfReady();
     _updateMetricsOverlay(debugStats);
     _startMetricsPolling(requestedDecoderPreference: settings.videoDecoderPreference);
 
-    await Future<void>.delayed(Duration(seconds: payload.renderWindowSeconds));
+    if (!await _runMeasurementPeriod(payload)) {
+      return;
+    }
     final DownlinkMetricsOverlayModel? finalDebugStats = _session!.readMetricsOverlay(
       requestedDecoderPreference: settings.videoDecoderPreference,
     );
@@ -283,11 +361,15 @@ class _AutomationPageState extends State<AutomationPage> {
       return;
     }
     final DownlinkMetricsOverlayModel markerStats = _lastAvStatsOverlay ?? finalDebugStats;
+    _markerSink.passed('final_metrics_snapshot', payload: _finalMetricsSnapshotPayload(payload, finalDebugStats));
     _markerSink.passed('render_window_completed', payload: <String, Object?>{
       'audio_error_count': _audioErrorCount,
       'video_error_count': _videoErrorCount,
       'audio_state': _session!.audioState.name,
       'video_state': _session!.videoState.name,
+      'requested_output_buffer_policy': settings.outputBufferPolicy,
+      'requested_output_buffer_max_watermark_ms': null,
+      'buffer_policy_ok': true,
       ...markerStats.debugMarkerPayload(sessionGeneration: _automationSessionGeneration),
     });
 
@@ -323,6 +405,79 @@ class _AutomationPageState extends State<AutomationPage> {
     _finish();
   }
 
+  Future<bool> _runMeasurementPeriod(AutomationPayload payload) async {
+    final int? resetAfterSeconds = payload.metricsSessionResetAfterSeconds;
+    if (resetAfterSeconds == null) {
+      await Future<void>.delayed(Duration(seconds: payload.renderWindowSeconds));
+      return true;
+    }
+    if (resetAfterSeconds > 0) {
+      await Future<void>.delayed(Duration(seconds: resetAfterSeconds));
+    }
+    final DemoDownlinkSession? session = _session;
+    if (session == null) {
+      _fail(
+        failureStage: 'measurement_start',
+        message: 'downlink session missing before metrics reset',
+      );
+      return false;
+    }
+    final int resetCode = session.resetOutputMetricsSession();
+    if (resetCode != 0) {
+      _fail(
+        failureStage: 'measurement_start',
+        message: 'metrics session reset failed',
+        errorCode: resetCode,
+      );
+      return false;
+    }
+    _markerSink.passed('metrics_session_reset', payload: <String, Object?>{
+      'after_seconds': resetAfterSeconds,
+      'measurement_duration_seconds': payload.renderWindowSeconds - resetAfterSeconds,
+    });
+    final int remainingSeconds = payload.renderWindowSeconds - resetAfterSeconds;
+    if (remainingSeconds > 0) {
+      await Future<void>.delayed(Duration(seconds: remainingSeconds));
+    }
+    return true;
+  }
+
+  Map<String, Object?> _finalMetricsSnapshotPayload(
+    AutomationPayload payload,
+    DownlinkMetricsOverlayModel metrics,
+  ) {
+    final int warmupSeconds = payload.metricsSessionResetAfterSeconds ?? 0;
+    return <String, Object?>{
+      'schema_version': 1,
+      'run_id': payload.runId,
+      'timestamp': DateTime.now().toUtc().toIso8601String(),
+      'elapsed_ms': payload.renderWindowSeconds * 1000,
+      'source': 'ui_text_final_snapshot',
+      'platform': Platform.operatingSystem,
+      'measurement': <String, Object?>{
+        'warmup_seconds': warmupSeconds,
+        'duration_seconds': payload.renderWindowSeconds,
+        'measurement_duration_seconds': payload.renderWindowSeconds - warmupSeconds,
+        'final_snapshot_elapsed_ms': payload.renderWindowSeconds * 1000,
+      },
+      'rows': metrics.snapshotRowsPayload(),
+      'period_summary': metrics.periodSummaryPayload(),
+    };
+  }
+
+  TiRtcOutputBufferStrategy _outputBufferStrategy(DemoExampleSettings settings) {
+    return settings.outputBufferPolicy == DemoExampleSettings.outputBufferPolicyNoBuffer
+        ? TiRtcOutputBufferStrategy.noBuffer
+        : TiRtcOutputBufferStrategy.automatic;
+  }
+
+  String _outputBufferStrategyName(TiRtcOutputBufferStrategy strategy) {
+    return switch (strategy) {
+      TiRtcOutputBufferStrategy.noBuffer => 'NO_BUFFER',
+      TiRtcOutputBufferStrategy.automatic => 'AUTOMATIC',
+    };
+  }
+
   Future<void> _runFlutterDeviceServerToCliClient(
     AutomationPayload payload,
     DemoExampleSettings settings,
@@ -333,13 +488,18 @@ class _AutomationPageState extends State<AutomationPage> {
         deviceId: payload.deviceId,
         deviceSecretKey: payload.deviceSecretKey,
         videoCodec: DemoDeviceVideoCodec.tryParse(payload.codec) ?? DemoDeviceVideoCodec.h264,
+        audioCodec: DemoDeviceAudioCodec.tryParse(payload.audioCodec) ?? DemoDeviceAudioCodec.g711a,
+        audioSampleRate:
+            DemoDeviceAudioSampleRate.tryParseHertz(payload.audioSampleRateHz) ?? DemoDeviceAudioSampleRate.rate16k,
+        audioChannels:
+            DemoDeviceAudioChannelCount.tryParseCount(payload.audioChannels) ?? DemoDeviceAudioChannelCount.mono,
         encoderPreference:
             DemoDeviceEncoderPreference.tryParse(payload.encoderPreference) ?? DemoDeviceEncoderPreference.hardware,
         settings: settings,
       ),
-      markerSink: _markerSink,
+      markerSink: _ScenarioMarkerSink(delegate: _markerSink, payload: payload),
       renderWindowSeconds: payload.renderWindowSeconds,
-      requestPermissions: _requestLocalMediaPermissionsIfNeeded,
+      requestPermissions: _requestCapturePermissionsIfNeeded,
     );
     _deviceServerController = controller;
     controller.addListener(_syncDeviceServerControllerState);
@@ -351,26 +511,48 @@ class _AutomationPageState extends State<AutomationPage> {
     _finish();
   }
 
-  Future<bool> _requestLocalMediaPermissionsIfNeeded() async {
-    if (!Platform.isAndroid) {
+  Future<bool> _requestCapturePermissionsIfNeeded() async {
+    final bool isOhos = Platform.operatingSystem == 'ohos';
+    if (!Platform.isAndroid && !isOhos) {
       return true;
     }
 
-    TiRtcLogging.i('flutter_example', 'android_local_media_permission_request_started');
+    final String platformName = isOhos ? 'ohos' : 'android';
+    final bool cameraGranted = await _requestCapturePermission(
+      platformName: platformName,
+      permissionName: 'camera',
+      method: 'requestCameraPermission',
+    );
+    if (!cameraGranted) {
+      return false;
+    }
+    return _requestCapturePermission(
+      platformName: platformName,
+      permissionName: 'microphone',
+      method: 'requestMicrophonePermission',
+    );
+  }
+
+  Future<bool> _requestCapturePermission({
+    required String platformName,
+    required String permissionName,
+    required String method,
+  }) async {
+    TiRtcLogging.i('flutter_example', '${platformName}_${permissionName}_permission_request_started');
     try {
-      final bool granted = await _permissionChannel.invokeMethod<bool>('requestLocalMediaPermissions') ?? false;
-      TiRtcLogging.i('flutter_example', 'android_local_media_permission_request_finished granted=$granted');
-      if (!granted) {
-        return false;
+      final bool granted = await _permissionChannel.invokeMethod<bool>(method) ?? false;
+      TiRtcLogging.i(
+          'flutter_example', '${platformName}_${permissionName}_permission_request_finished granted=$granted');
+      if (granted) {
+        _markerSink.passed('${permissionName}_permission_granted', payload: <String, Object?>{
+          'platform': platformName,
+        });
       }
-      _markerSink.passed('local_media_permissions_granted', payload: <String, Object?>{
-        'platform': 'android',
-      });
-      return true;
+      return granted;
     } on PlatformException catch (error) {
       TiRtcLogging.w(
         'flutter_example',
-        'android_local_media_permission_request_failed code=${error.code} message=${error.message ?? ''}',
+        '${platformName}_${permissionName}_permission_request_failed code=${error.code} message=${error.message ?? ''}',
       );
       return false;
     }
@@ -420,11 +602,35 @@ class _AutomationPageState extends State<AutomationPage> {
         _completeFailure('render_timeout');
       },
       onCommand: _handleAutomationCommand,
+      onStreamMessage: _handleAutomationStreamMessage,
     );
   }
 
   void _handleAutomationCommand(int commandId, Uint8List payload) {
     _commandProbe?.handleCommand(commandId, payload);
+  }
+
+  void _handleAutomationStreamMessage(int streamId, int timestampMs, Uint8List payload) {
+    final AutomationPayload? automationPayload = widget.parseResult.payload;
+    if (automationPayload == null || streamId != automationPayload.videoStreamId) {
+      return;
+    }
+    final int? epochSeconds = decodeDemoStreamMessageEpochSeconds(payload);
+    if (epochSeconds == null) {
+      return;
+    }
+    _pendingStreamMessageMarkerPayload = <String, Object?>{
+      'scenario': automationPayload.scenario,
+      'pairing_id': automationPayload.pairingId,
+      'session_index': 1,
+      'stream_id': streamId,
+      'payload_epoch_seconds': epochSeconds,
+      'payload_bytes': payload.length,
+      'payload_hash': demoStreamMessagePayloadHash(payload),
+      'received_count': 1,
+      'matched_source': true,
+    };
+    _markStreamMessageReceivedIfReady();
   }
 
   Future<bool> _runCommandProbe() async {
@@ -457,7 +663,20 @@ class _AutomationPageState extends State<AutomationPage> {
       'payload_text': result.payloadText,
       'payload_bytes': result.payloadBytes,
     });
+    _commandEchoMarked = true;
     return true;
+  }
+
+  void _markStreamMessageReceivedIfReady() {
+    if (_streamMessageMarked || !_commandEchoMarked) {
+      return;
+    }
+    final Map<String, Object?>? payload = _pendingStreamMessageMarkerPayload;
+    if (payload == null) {
+      return;
+    }
+    _streamMessageMarked = true;
+    _markerSink.passed('stream_message_received', payload: payload);
   }
 
   bool _isHealthyAudioState(TiRtcAudioOutputState state) {
@@ -576,7 +795,7 @@ class _AutomationPageState extends State<AutomationPage> {
     if (_service != null) {
       await _releaseServerRoleResources(reason: reason);
     } else {
-      _session?.disconnect(reason: reason);
+      await _session?.release(reason: reason);
     }
     _audioSession.releaseIfNeeded(reason: reason);
   }

@@ -9,6 +9,7 @@ import '../device/device_configure_page.dart';
 import '../demo_configuration.dart';
 import '../demo_permissions.dart';
 import '../demo_test_hooks.dart';
+import '../settings/downlink_configuration_store.dart';
 import '../settings/demo_example_settings_store.dart';
 import '../widgets/configure_page_widgets.dart';
 import 'player_page.dart';
@@ -23,6 +24,9 @@ class DemoConfigurePage extends StatefulWidget {
 }
 
 class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindingObserver {
+  static const int _runtimeObjectsLiveCode = 1007;
+  static const int _runtimeShutdownRetryCount = 10;
+  static const Duration _runtimeShutdownRetryDelay = Duration(milliseconds: 100);
   static const SystemUiOverlayStyle _configurePageOverlayStyle = SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
     statusBarIconBrightness: Brightness.dark,
@@ -35,24 +39,32 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
   final TextEditingController _remoteIdController = TextEditingController();
   final TextEditingController _audioStreamIdController = TextEditingController();
   final TextEditingController _videoStreamIdController = TextEditingController();
+  final TextEditingController _tokenIssuerBaseUrlController = TextEditingController();
   final TextEditingController _tokenController = TextEditingController();
+  final DemoTokenAcquirer _tokenAcquirer = const DemoTokenAcquirer();
   final DemoExamplePermissions _permissions = const DemoExamplePermissions();
   final DemoExampleSettingsStore _settingsStore = const DemoExampleSettingsStore();
+  final DemoDownlinkConfigurationStore _configurationStore = const DemoDownlinkConfigurationStore();
 
   bool _submitted = false;
   bool _startingPlayer = false;
+  DemoTokenSource _tokenSource = DemoTokenSource.issuer;
   DemoExampleSettings _settings = const DemoExampleSettings();
-  bool _iosLocalNetworkPermissionRequested = false;
-
-  bool get _scanSupported => Platform.isAndroid || Platform.isIOS;
+  bool _iosLocalNetworkPermissionReady = false;
+  Future<bool>? _iosLocalNetworkPermissionRequest;
+  Timer? _configurationSaveDebounce;
+  bool _applyingStoredConfiguration = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _attachConfigurationAutosaveListeners();
+    unawaited(_loadConfigurationSnapshot());
     unawaited(_loadSettingsSnapshot(reason: 'initial'));
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _applyConfigurePageSystemOverlayStyle();
+      unawaited(_requestIosLocalNetworkPermissionIfNeeded());
     });
   }
 
@@ -64,7 +76,9 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
     _remoteIdController.dispose();
     _audioStreamIdController.dispose();
     _videoStreamIdController.dispose();
+    _tokenIssuerBaseUrlController.dispose();
     _tokenController.dispose();
+    _configurationSaveDebounce?.cancel();
     super.dispose();
   }
 
@@ -88,10 +102,8 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: <Widget>[
                       ConfigureHeader(
-                        scanSupported: _scanSupported,
                         startingPlayer: _startingPlayer,
                         onOpenSettings: _openSettings,
-                        onScanToken: _scanToken,
                       ),
                       const SizedBox(height: 20),
                       ConfigureForm(
@@ -103,9 +115,16 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
                         remoteIdController: _remoteIdController,
                         audioStreamIdController: _audioStreamIdController,
                         videoStreamIdController: _videoStreamIdController,
+                        tokenSource: _tokenSource,
+                        tokenIssuerBaseUrlController: _tokenIssuerBaseUrlController,
                         tokenController: _tokenController,
                         validateEndpoint: _validateEndpoint,
                         validateStreamId: _validateStreamId,
+                        validateTokenIssuerBaseUrl: _validateTokenIssuerBaseUrl,
+                        validateOneTimeToken: _validateOneTimeToken,
+                        onTokenSourceChanged: _selectTokenSource,
+                        scanSupported: _scanSupported,
+                        onScanToken: _scanToken,
                         onStartPlaying: _startPlaying,
                       ),
                       const SizedBox(height: 14),
@@ -124,6 +143,8 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
     );
   }
 
+  bool get _scanSupported => Platform.isAndroid || Platform.isIOS;
+
   String? _validateEndpoint(String? value) {
     final String text = (value ?? '').trim();
     if (text.isEmpty) {
@@ -133,6 +154,34 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
     final Uri? uri = Uri.tryParse(text);
     if (uri == null || uri.host.isEmpty || (uri.scheme != 'http' && uri.scheme != 'https')) {
       return '请输入完整的 http(s) URL。';
+    }
+    return null;
+  }
+
+  String? _validateTokenIssuerBaseUrl(String? value) {
+    if (_tokenSource != DemoTokenSource.issuer) {
+      return null;
+    }
+    final String tokenIssuerBaseUrl = (value ?? '').trim();
+    if (tokenIssuerBaseUrl.isEmpty) {
+      return '请填写 Token 签发服务地址。';
+    }
+    try {
+      normalizeDemoTokenIssuerBaseUrl(tokenIssuerBaseUrl);
+    } on FormatException {
+      return '请输入完整的 http(s) Token 签发服务地址，或直接返回 v1 Token 的 URL。';
+    }
+    return null;
+  }
+
+  String? _validateOneTimeToken(String? value) {
+    if (_tokenSource != DemoTokenSource.oneTime) {
+      return null;
+    }
+    try {
+      normalizeDemoConnectionToken(value ?? '');
+    } on FormatException {
+      return '请输入有效的一次性连接 Token。';
     }
     return null;
   }
@@ -156,55 +205,12 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
     return _appIdController.text.trim();
   }
 
-  Future<void> _scanToken() async {
-    _dismissKeyboard();
-    final DemoScanPayload? payload = await Navigator.of(context).push<DemoScanPayload>(
-      MaterialPageRoute<DemoScanPayload>(
-        builder: (BuildContext context) => const DemoQrScannerPage(),
-      ),
-    );
-    _dismissKeyboard();
-    _applyConfigurePageSystemOverlayStyle();
-    if (!mounted || payload == null) {
-      return;
-    }
-
-    _appIdController.text = payload.appId;
-    _remoteIdController.text = payload.remoteId;
-    _tokenController.text = payload.token;
-    _applyScannedEndpoint(payload.endpoint);
-    TiRtcLogging.i(
-      'flutter_example',
-      'scan_payload_applied appIdPresent=${payload.appId.isNotEmpty} '
-          'remoteId=${payload.remoteId} endpoint=${_resolvedEndpoint()}',
-    );
-
-    _showSnack(
-      payload.endpoint == null || payload.endpoint!.trim().isEmpty
-          ? '扫码成功，已填充 app_id / remote_id / token，并保留当前 endpoint。'
-          : '扫码成功，已填充 app_id / remote_id / token / endpoint。',
-    );
-  }
-
-  void _applyScannedEndpoint(String? endpoint) {
-    final String normalizedEndpoint = (endpoint ?? '').trim();
-    if (normalizedEndpoint.isEmpty) {
-      return;
-    }
-    _endpointController.value = TextEditingValue(
-      text: normalizedEndpoint,
-      selection: TextSelection.collapsed(offset: normalizedEndpoint.length),
-    );
-    _appIdController.selection = TextSelection.collapsed(offset: _appIdController.text.length);
-    _remoteIdController.selection = TextSelection.collapsed(offset: _remoteIdController.text.length);
-    _tokenController.selection = TextSelection.collapsed(offset: _tokenController.text.length);
-  }
-
   Future<void> _startPlaying() async {
     final DemoDownlinkConfiguration? configuration = _validatedConfiguration(showFeedback: true);
     if (configuration == null) {
       return;
     }
+    await _saveConfigurationSnapshot();
     await _openPlayer(configuration);
   }
 
@@ -235,7 +241,11 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
         controller: _videoStreamIdController,
         fallback: DemoDownlinkConfiguration.defaultVideoStreamId,
       ),
-      token: _tokenController.text.trim(),
+      tokenSource: _tokenSource,
+      tokenIssuerBaseUrl: _tokenSource == DemoTokenSource.issuer
+          ? normalizeDemoTokenIssuerBaseUrl(_tokenIssuerBaseUrlController.text)
+          : '',
+      token: _tokenSource == DemoTokenSource.oneTime ? normalizeDemoConnectionToken(_tokenController.text) : '',
       settings: _settings,
     );
   }
@@ -261,23 +271,49 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
       _startingPlayer = true;
     });
 
-    await _requestIosLocalNetworkPermissionIfNeeded();
+    final bool localNetworkReady = await _requestIosLocalNetworkPermissionIfNeeded();
+    if (!localNetworkReady) {
+      if (mounted) {
+        setState(() {
+          _startingPlayer = false;
+        });
+        _showSnack('请先允许 iOS 本地网络权限后再播放。');
+      }
+      return;
+    }
+
+    final DemoDownlinkConfiguration resolvedConfiguration;
+    try {
+      resolvedConfiguration = await _configurationWithResolvedToken(configuration);
+    } on Object catch (error) {
+      if (mounted) {
+        setState(() {
+          _startingPlayer = false;
+        });
+        _showSnack('token 获取失败：$error');
+      }
+      return;
+    }
+    if (!mounted) {
+      return;
+    }
 
     TiRtcLogging.i(
       'flutter_example',
-      'runtime_initialize_requested appIdPresent=${configuration.appId.isNotEmpty} '
-          'endpoint=${configuration.endpoint} remoteId=${configuration.remoteId}',
+      'runtime_initialize_requested appIdPresent=${resolvedConfiguration.appId.isNotEmpty} '
+          'endpoint=${resolvedConfiguration.endpoint} remoteId=${resolvedConfiguration.remoteId} '
+          'tokenSource=${resolvedConfiguration.tokenSource.name}',
     );
     final int initializeCode = await TiRtc.initialize(
       TiRtcInitOptions(
-        appId: configuration.appId,
-        endpoint: configuration.endpoint,
-        consoleLogEnabled: configuration.settings.consoleLogEnabled,
+        appId: resolvedConfiguration.appId,
+        endpoint: resolvedConfiguration.endpoint,
+        consoleLogEnabled: resolvedConfiguration.settings.consoleLogEnabled,
       ),
     );
     if (!mounted) {
       if (initializeCode == 0) {
-        _shutdownRuntime();
+        await _shutdownRuntimeAfterDisposal();
       }
       return;
     }
@@ -288,7 +324,7 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
       });
       TiRtcLogging.w(
         'flutter_example',
-        'runtime_initialize_failed code=$initializeCode endpoint=${configuration.endpoint}',
+        'runtime_initialize_failed code=$initializeCode endpoint=${resolvedConfiguration.endpoint}',
       );
       _showSnack('运行时初始化失败，code $initializeCode。');
       return;
@@ -296,23 +332,23 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
 
     TiRtcLogging.i(
       'flutter_example',
-      'runtime_initialized endpoint=${configuration.endpoint}',
+      'runtime_initialized endpoint=${resolvedConfiguration.endpoint}',
     );
 
     try {
       TiRtcLogging.i(
         'flutter_example',
-        'open_player endpoint=${configuration.endpoint} '
-            'remoteId=${configuration.remoteId} '
-            'audioStreamId=${configuration.audioStreamId} '
-            'videoStreamId=${configuration.videoStreamId}',
+        'open_player endpoint=${resolvedConfiguration.endpoint} '
+            'remoteId=${resolvedConfiguration.remoteId} '
+            'audioStreamId=${resolvedConfiguration.audioStreamId} '
+            'videoStreamId=${resolvedConfiguration.videoStreamId}',
       );
       await Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
           builder: (BuildContext context) {
             final DemoExampleSmokeHooks? smokeHooks = DemoExampleSmokeHooks.current;
             return DemoPlayerPage(
-              configuration: configuration,
+              configuration: resolvedConfiguration,
               smokeMarkerSink: smokeHooks?.markerSink,
               smokeRenderWindowSeconds: smokeHooks?.renderWindowSeconds ?? 30,
             );
@@ -320,10 +356,10 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
         ),
       );
       _dismissKeyboard();
+      _clearVolatileTokenInputs();
       _applyConfigurePageSystemOverlayStyle();
-      _clearTokenAfterDownlinkReturn();
     } finally {
-      final int shutdownCode = _shutdownRuntime();
+      final int shutdownCode = await _shutdownRuntimeAfterDisposal();
       if (shutdownCode != 0) {
         TiRtcLogging.w('flutter_example', 'runtime_shutdown_failed code=$shutdownCode');
       }
@@ -333,6 +369,20 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
         });
       }
     }
+  }
+
+  Future<DemoDownlinkConfiguration> _configurationWithResolvedToken(
+    DemoDownlinkConfiguration configuration,
+  ) async {
+    final String token = await _tokenAcquirer.resolve(
+      configuration: configuration.tokenSourceConfiguration,
+      remoteId: configuration.remoteId,
+    );
+    TiRtcLogging.i(
+      'flutter_example',
+      'token_resolved source=${configuration.tokenSource.name} remoteId=${configuration.remoteId}',
+    );
+    return configuration.withToken(token);
   }
 
   Future<void> _openSettings() async {
@@ -377,19 +427,148 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
       'flutter_example',
       'example_settings_loaded reason=$reason '
           'video_decoder_preference=${settings.videoDecoderPreference} '
+          'output_buffer_policy=${settings.outputBufferPolicy} '
           'console_log_enabled=${settings.consoleLogEnabled}',
     );
   }
 
-  Future<void> _requestIosLocalNetworkPermissionIfNeeded() async {
-    if (!Platform.isIOS || _iosLocalNetworkPermissionRequested) {
+  void _attachConfigurationAutosaveListeners() {
+    for (final TextEditingController controller in <TextEditingController>[
+      _appIdController,
+      _endpointController,
+      _remoteIdController,
+      _audioStreamIdController,
+      _videoStreamIdController,
+      _tokenIssuerBaseUrlController,
+    ]) {
+      controller.addListener(_scheduleConfigurationSave);
+    }
+  }
+
+  Future<void> _loadConfigurationSnapshot() async {
+    final DemoDownlinkConfigurationSnapshot snapshot = await _configurationStore.load();
+    if (!mounted) {
+      return;
+    }
+    _applyingStoredConfiguration = true;
+    _appIdController.text = snapshot.appId;
+    _endpointController.text = snapshot.endpoint;
+    _remoteIdController.text = snapshot.remoteId;
+    _audioStreamIdController.text = snapshot.audioStreamId;
+    _videoStreamIdController.text = snapshot.videoStreamId;
+    _tokenIssuerBaseUrlController.text = snapshot.tokenIssuerBaseUrl;
+    setState(() {
+      _tokenSource = DemoTokenSource.issuer;
+    });
+    _applyingStoredConfiguration = false;
+    TiRtcLogging.i(
+      'flutter_example',
+      'downlink_configuration_loaded appIdPresent=${snapshot.appId.isNotEmpty} '
+          'endpoint=${snapshot.endpoint} remoteId=${snapshot.remoteId} '
+          'tokenIssuerBaseUrlPresent=${snapshot.tokenIssuerBaseUrl.isNotEmpty}',
+    );
+  }
+
+  void _selectTokenSource(DemoTokenSource source) {
+    if (_tokenSource == source || _startingPlayer) {
+      return;
+    }
+    setState(() {
+      _tokenSource = source;
+    });
+  }
+
+  Future<void> _scanToken() async {
+    if (!_scanSupported || _startingPlayer) {
       return;
     }
 
-    _iosLocalNetworkPermissionRequested = true;
+    _dismissKeyboard();
+    final DemoScanPayload? payload = await Navigator.of(context).push<DemoScanPayload>(
+      MaterialPageRoute<DemoScanPayload>(
+        builder: (BuildContext context) => const DemoQrScannerPage(),
+      ),
+    );
+    if (!mounted || payload == null) {
+      return;
+    }
+
+    setState(() {
+      _tokenSource = DemoTokenSource.oneTime;
+      _tokenController.text = payload.token;
+      if (payload.appId != null) {
+        _appIdController.text = payload.appId!;
+      }
+      if (payload.remoteId != null) {
+        _remoteIdController.text = payload.remoteId!;
+      }
+      if (payload.endpoint != null) {
+        _endpointController.text = payload.endpoint!;
+      }
+    });
+    TiRtcLogging.i(
+      'flutter_example',
+      'qr_token_applied appIdPresent=${payload.appId != null} '
+          'remoteIdPresent=${payload.remoteId != null} endpointPresent=${payload.endpoint != null}',
+    );
+  }
+
+  void _clearVolatileTokenInputs() {
+    if (_tokenController.text.isEmpty) {
+      return;
+    }
+    _tokenController.clear();
+  }
+
+  void _scheduleConfigurationSave() {
+    if (_applyingStoredConfiguration) {
+      return;
+    }
+    _configurationSaveDebounce?.cancel();
+    _configurationSaveDebounce = Timer(const Duration(milliseconds: 250), () {
+      unawaited(_saveConfigurationSnapshot());
+    });
+  }
+
+  DemoDownlinkConfigurationSnapshot _currentConfigurationSnapshot() {
+    return DemoDownlinkConfigurationSnapshot(
+      appId: _appIdController.text.trim(),
+      endpoint: _endpointController.text.trim(),
+      remoteId: _remoteIdController.text.trim(),
+      audioStreamId: _audioStreamIdController.text.trim(),
+      videoStreamId: _videoStreamIdController.text.trim(),
+      tokenIssuerBaseUrl: _tokenIssuerBaseUrlController.text.trim(),
+    );
+  }
+
+  Future<void> _saveConfigurationSnapshot() async {
+    try {
+      await _configurationStore.save(_currentConfigurationSnapshot());
+    } on Object catch (error) {
+      TiRtcLogging.w('flutter_example', 'downlink_configuration_save_failed error=$error');
+    }
+  }
+
+  Future<bool> _requestIosLocalNetworkPermissionIfNeeded() async {
+    if (!Platform.isIOS || _iosLocalNetworkPermissionReady) {
+      return true;
+    }
+    final Future<bool>? inFlightRequest = _iosLocalNetworkPermissionRequest;
+    if (inFlightRequest != null) {
+      return inFlightRequest;
+    }
+
+    final Future<bool> request = _permissions.requestLocalNetworkPermissionIfNeeded();
+    _iosLocalNetworkPermissionRequest = request;
     TiRtcLogging.i('flutter_example', 'ios_local_network_permission_request_started');
-    await _permissions.requestLocalNetworkPermissionIfNeeded();
-    TiRtcLogging.i('flutter_example', 'ios_local_network_permission_request_finished');
+    try {
+      final bool granted = await request;
+      _iosLocalNetworkPermissionReady = granted;
+      TiRtcLogging.i('flutter_example', 'ios_local_network_permission_request_finished granted=$granted');
+      return granted;
+    } finally {
+      _iosLocalNetworkPermissionRequest = null;
+    }
   }
 
   @override
@@ -407,14 +586,14 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
     FocusManager.instance.primaryFocus?.unfocus();
   }
 
-  void _clearTokenAfterDownlinkReturn() {
-    _tokenController.clear();
-    _showSnack('已返回配置页，token 已清空，请重新扫码或粘贴。');
-  }
-
-  int _shutdownRuntime() {
+  Future<int> _shutdownRuntimeAfterDisposal() async {
     TiRtcLogging.i('flutter_example', 'runtime_shutdown_requested');
-    return TiRtc.shutdown();
+    int code = TiRtc.shutdown();
+    for (int attempt = 0; attempt < _runtimeShutdownRetryCount && code == _runtimeObjectsLiveCode; attempt += 1) {
+      await Future<void>.delayed(_runtimeShutdownRetryDelay);
+      code = TiRtc.shutdown();
+    }
+    return code;
   }
 
   void _showSnack(String message) {

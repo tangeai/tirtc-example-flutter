@@ -14,7 +14,6 @@ import '../settings/device_server_configuration_store.dart';
 import '../widgets/configure_page_widgets.dart';
 import '../widgets/notice_dialog.dart';
 import 'device_page.dart';
-import 'device_qr_scanner_page.dart';
 
 class DemoDeviceServerConfigurePage extends StatefulWidget {
   const DemoDeviceServerConfigurePage({super.key});
@@ -39,8 +38,6 @@ class _DemoDeviceServerConfigurePageState extends State<DemoDeviceServerConfigur
   bool _submitted = false;
   bool _saving = false;
   bool _loaded = false;
-
-  bool get _scanSupported => Platform.isAndroid || Platform.isIOS;
 
   @override
   void initState() {
@@ -72,10 +69,8 @@ class _DemoDeviceServerConfigurePageState extends State<DemoDeviceServerConfigur
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: <Widget>[
                     _DeviceServerHeader(
-                      scanSupported: _scanSupported,
                       saving: _saving,
                       onBack: () => Navigator.of(context).pop(),
-                      onScan: _scanDevicePayload,
                     ),
                     const SizedBox(height: 20),
                     _buildForm(),
@@ -90,136 +85,60 @@ class _DemoDeviceServerConfigurePageState extends State<DemoDeviceServerConfigur
   }
 
   Widget _buildForm() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: ExampleTheme.surface.withAlpha(224),
-        borderRadius: BorderRadius.circular(30),
-      ),
-      child: Form(
-        key: _formKey,
-        autovalidateMode: _submitted ? AutovalidateMode.always : AutovalidateMode.disabled,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: <Widget>[
-            TextFormField(
-              key: DemoWidgetKeys.deviceEndpointField,
-              controller: _endpointController,
-              enabled: !_saving,
-              keyboardType: TextInputType.url,
-              textInputAction: TextInputAction.next,
-              style: const TextStyle(fontSize: 13),
-              decoration: const InputDecoration(
-                labelText: 'endpoint',
-                hintText: '接入的云端环境，留空则使用默认环境。',
-              ),
-              validator: _validateEndpoint,
+    return Form(
+      key: _formKey,
+      autovalidateMode: _submitted ? AutovalidateMode.always : AutovalidateMode.disabled,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          TextFormField(
+            key: DemoWidgetKeys.deviceEndpointField,
+            controller: _endpointController,
+            enabled: !_saving,
+            keyboardType: TextInputType.url,
+            textInputAction: TextInputAction.next,
+            style: const TextStyle(fontSize: 13),
+            decoration: const InputDecoration(
+              labelText: 'endpoint',
+              hintText: '接入的云端环境，留空则使用默认环境。',
             ),
-            const SizedBox(height: 16),
-            TextFormField(
-              key: DemoWidgetKeys.deviceIdField,
-              controller: _deviceIdController,
-              enabled: !_saving,
-              textInputAction: TextInputAction.next,
-              style: const TextStyle(fontSize: 13),
-              decoration: const InputDecoration(
-                labelText: 'device_id',
-                hintText: '设备端身份标识。',
-              ),
-              validator: _required('device_id'),
+            validator: _validateEndpoint,
+          ),
+          const SizedBox(height: 16),
+          TextFormField(
+            key: DemoWidgetKeys.deviceIdField,
+            controller: _deviceIdController,
+            enabled: !_saving,
+            textInputAction: TextInputAction.next,
+            style: const TextStyle(fontSize: 13),
+            decoration: const InputDecoration(
+              labelText: 'device_id',
+              hintText: '设备端身份标识。',
             ),
-            const SizedBox(height: 16),
-            TextFormField(
-              key: DemoWidgetKeys.deviceSecretKeyField,
-              controller: _deviceSecretKeyController,
-              enabled: !_saving,
-              minLines: 2,
-              maxLines: 4,
-              style: const TextStyle(fontSize: 13),
-              decoration: const InputDecoration(
-                labelText: 'device_secret_key',
-                hintText: '设备端连接密钥。',
-                alignLabelWithHint: true,
-              ),
-              validator: _required('device_secret_key'),
+            validator: _required('device_id'),
+          ),
+          const SizedBox(height: 16),
+          TextFormField(
+            key: DemoWidgetKeys.deviceSecretKeyField,
+            controller: _deviceSecretKeyController,
+            enabled: !_saving,
+            minLines: 2,
+            maxLines: 4,
+            style: const TextStyle(fontSize: 13),
+            decoration: const InputDecoration(
+              labelText: 'device_secret_key',
+              hintText: '设备端连接密钥。',
+              alignLabelWithHint: true,
             ),
-            const SizedBox(height: 18),
-            _ChoiceLabel(label: '摄像头'),
-            const SizedBox(height: 8),
-            SegmentedButton<DemoDeviceCameraFacing>(
-              segments: const <ButtonSegment<DemoDeviceCameraFacing>>[
-                ButtonSegment<DemoDeviceCameraFacing>(
-                  value: DemoDeviceCameraFacing.front,
-                  icon: Icon(Icons.face_rounded),
-                  label: Text('前置'),
-                ),
-                ButtonSegment<DemoDeviceCameraFacing>(
-                  value: DemoDeviceCameraFacing.back,
-                  icon: Icon(Icons.photo_camera_back_rounded),
-                  label: Text('后置'),
-                ),
-              ],
-              selected: <DemoDeviceCameraFacing>{_cameraFacing},
-              onSelectionChanged: _saving
-                  ? null
-                  : (Set<DemoDeviceCameraFacing> value) {
-                      setState(() {
-                        _cameraFacing = value.first;
-                      });
-                    },
-            ),
-            const SizedBox(height: 18),
-            _ChoiceLabel(label: '编码格式'),
-            const SizedBox(height: 8),
-            SegmentedButton<DemoDeviceVideoCodec>(
-              segments: const <ButtonSegment<DemoDeviceVideoCodec>>[
-                ButtonSegment<DemoDeviceVideoCodec>(value: DemoDeviceVideoCodec.h264, label: Text('H264')),
-                ButtonSegment<DemoDeviceVideoCodec>(value: DemoDeviceVideoCodec.mjpeg, label: Text('MJPEG')),
-              ],
-              selected: <DemoDeviceVideoCodec>{_videoCodec},
-              onSelectionChanged: _saving
-                  ? null
-                  : (Set<DemoDeviceVideoCodec> value) {
-                      setState(() {
-                        _videoCodec = value.first;
-                        if (_videoCodec == DemoDeviceVideoCodec.mjpeg) {
-                          _encoderPreference = DemoDeviceEncoderPreference.software;
-                        }
-                      });
-                    },
-            ),
-            const SizedBox(height: 18),
-            _ChoiceLabel(label: '编码后端'),
-            const SizedBox(height: 8),
-            SegmentedButton<DemoDeviceEncoderPreference>(
-              segments: <ButtonSegment<DemoDeviceEncoderPreference>>[
-                const ButtonSegment<DemoDeviceEncoderPreference>(
-                  value: DemoDeviceEncoderPreference.software,
-                  label: Text('软编'),
-                ),
-                ButtonSegment<DemoDeviceEncoderPreference>(
-                  value: DemoDeviceEncoderPreference.hardware,
-                  enabled: _videoCodec == DemoDeviceVideoCodec.h264,
-                  label: const Text('硬编'),
-                ),
-              ],
-              selected: <DemoDeviceEncoderPreference>{_encoderPreference},
-              onSelectionChanged: _saving
-                  ? null
-                  : (Set<DemoDeviceEncoderPreference> value) {
-                      setState(() {
-                        _encoderPreference = value.first;
-                      });
-                    },
-            ),
-            const SizedBox(height: 20),
-            FilledButton(
-              key: DemoWidgetKeys.startDeviceServerButton,
-              onPressed: _saving || !_loaded ? null : _submit,
-              child: _saving ? const Text('保存中') : const Text('进入设备端'),
-            ),
-          ],
-        ),
+            validator: _required('device_secret_key'),
+          ),
+          const SizedBox(height: 20),
+          FilledButton(
+            key: DemoWidgetKeys.startDeviceServerButton,
+            onPressed: _saving || !_loaded ? null : _submit,
+            child: _saving ? const Text('保存中') : const Text('进入设备端'),
+          ),
+        ],
       ),
     );
   }
@@ -240,27 +159,6 @@ class _DemoDeviceServerConfigurePageState extends State<DemoDeviceServerConfigur
       _encoderPreference = snapshot.encoderPreference;
       _loaded = true;
     });
-  }
-
-  Future<void> _scanDevicePayload() async {
-    _dismissKeyboard();
-    final DemoDeviceServerScanPayload? payload = await Navigator.of(context).push<DemoDeviceServerScanPayload>(
-      MaterialPageRoute<DemoDeviceServerScanPayload>(
-        builder: (BuildContext context) => const DemoDeviceQrScannerPage(),
-      ),
-    );
-    _dismissKeyboard();
-    if (!mounted || payload == null) {
-      return;
-    }
-    setState(() {
-      _deviceIdController.text = payload.deviceId;
-      _deviceSecretKeyController.text = payload.deviceSecretKey;
-      if (payload.endpoint != null) {
-        _endpointController.text = payload.endpoint!;
-      }
-    });
-    _showSnack('扫码成功，已填充设备端配置。');
   }
 
   Future<void> _submit() async {
@@ -289,17 +187,17 @@ class _DemoDeviceServerConfigurePageState extends State<DemoDeviceServerConfigur
       _saving = true;
     });
 
-    final bool permissionsGranted = await _ensureLocalMediaPermissions();
+    final bool capturePermissionsReady = await _ensureCapturePermissions();
     if (!mounted) {
       return;
     }
-    if (!permissionsGranted) {
+    if (!capturePermissionsReady) {
       setState(() {
         _saving = false;
       });
       unawaited(
         _showDeviceServerFailureDialog(
-          stage: 'local_media_permission',
+          stage: 'capture_permission',
           message: '需要允许摄像头和麦克风权限后，才能进入设备端播放页面。',
           endpoint: configuration.endpoint,
         ),
@@ -372,16 +270,35 @@ class _DemoDeviceServerConfigurePageState extends State<DemoDeviceServerConfigur
     }
   }
 
-  Future<bool> _ensureLocalMediaPermissions() async {
-    TiRtcLogging.i('flutter_example', 'local_media_permission_check_started');
-    final bool alreadyGranted = await _permissions.checkLocalMediaPermissions();
-    TiRtcLogging.i('flutter_example', 'local_media_permission_check_finished granted=$alreadyGranted');
-    if (alreadyGranted) {
-      return true;
+  Future<bool> _ensureCapturePermissions() async {
+    TiRtcLogging.i('flutter_example', 'camera_permission_check_started');
+    final bool cameraGranted = await _permissions.checkCameraPermission() || await _requestCameraPermission();
+    TiRtcLogging.i('flutter_example', 'camera_permission_ready granted=$cameraGranted');
+    if (!cameraGranted) {
+      return false;
     }
-    TiRtcLogging.i('flutter_example', 'local_media_permission_request_started');
-    final bool granted = await _permissions.requestLocalMediaPermissions();
-    TiRtcLogging.i('flutter_example', 'local_media_permission_request_finished granted=$granted');
+
+    TiRtcLogging.i('flutter_example', 'microphone_permission_check_started');
+    final bool microphoneGranted =
+        await _permissions.checkMicrophonePermission() || await _requestMicrophonePermission();
+    TiRtcLogging.i('flutter_example', 'microphone_permission_ready granted=$microphoneGranted');
+    if (!microphoneGranted) {
+      return false;
+    }
+    return true;
+  }
+
+  Future<bool> _requestCameraPermission() async {
+    TiRtcLogging.i('flutter_example', 'camera_permission_request_started');
+    final bool granted = await _permissions.requestCameraPermission();
+    TiRtcLogging.i('flutter_example', 'camera_permission_request_finished granted=$granted');
+    return granted;
+  }
+
+  Future<bool> _requestMicrophonePermission() async {
+    TiRtcLogging.i('flutter_example', 'microphone_permission_request_started');
+    final bool granted = await _permissions.requestMicrophonePermission();
+    TiRtcLogging.i('flutter_example', 'microphone_permission_request_finished granted=$granted');
     return granted;
   }
 
@@ -459,62 +376,47 @@ class _DemoDeviceServerConfigurePageState extends State<DemoDeviceServerConfigur
 
 class _DeviceServerHeader extends StatelessWidget {
   const _DeviceServerHeader({
-    required this.scanSupported,
     required this.saving,
     required this.onBack,
-    required this.onScan,
   });
 
-  final bool scanSupported;
   final bool saving;
   final VoidCallback onBack;
-  final VoidCallback onScan;
 
   @override
   Widget build(BuildContext context) {
+    final TextStyle baseStyle = Theme.of(context).textTheme.headlineLarge ?? const TextStyle();
+    final TextStyle titleStyle = baseStyle.copyWith(
+      fontSize: 22,
+      color: ExampleTheme.brandText,
+      fontWeight: FontWeight.w700,
+      letterSpacing: 0,
+      height: 1.0,
+    );
+
     return Row(
       children: <Widget>[
         IconButton(
           tooltip: '返回',
           onPressed: saving ? null : onBack,
+          style: IconButton.styleFrom(
+            foregroundColor: saving ? ExampleTheme.textHint : ExampleTheme.primary,
+            backgroundColor: ExampleTheme.surface,
+            minimumSize: const Size.square(40),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(999),
+            ),
+          ),
           icon: const Icon(Icons.arrow_back_rounded),
         ),
         const SizedBox(width: 10),
-        const Expanded(
+        Expanded(
           child: Text(
             '设备端',
-            style: TextStyle(
-              color: ExampleTheme.brandText,
-              fontSize: 22,
-              fontWeight: FontWeight.w700,
-            ),
+            style: titleStyle,
           ),
         ),
-        if (scanSupported)
-          TextButton.icon(
-            onPressed: saving ? null : onScan,
-            icon: const Icon(Icons.qr_code_scanner_rounded, size: 18),
-            label: const Text('扫一扫'),
-          ),
       ],
-    );
-  }
-}
-
-class _ChoiceLabel extends StatelessWidget {
-  const _ChoiceLabel({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(
-      label,
-      style: const TextStyle(
-        color: ExampleTheme.textSecondary,
-        fontSize: 13,
-        fontWeight: FontWeight.w600,
-      ),
     );
   }
 }

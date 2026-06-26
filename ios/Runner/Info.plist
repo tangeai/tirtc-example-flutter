@@ -44,7 +44,7 @@
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>Capture local video for TiRTC example calls and scan token QR codes.</string>
+	<string>Capture local video for TiRTC example calls.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Capture local audio for TiRTC example calls.</string>
 	<key>NSLocalNetworkUsageDescription</key>

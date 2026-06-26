@@ -31,6 +31,11 @@ flutter_macos_podfile_setup
 target 'Runner' do
   use_frameworks!
 
+  local_tirtc_av_pod_path = ENV['TIRTC_AV_LOCAL_POD_PATH']
+  unless local_tirtc_av_pod_path.nil? || local_tirtc_av_pod_path.empty?
+    pod 'TiRTC_AV', :path => File.expand_path(local_tirtc_av_pod_path)
+  end
+
   flutter_install_all_macos_pods File.dirname(File.realpath(__FILE__))
   target 'RunnerTests' do
     inherit! :search_paths

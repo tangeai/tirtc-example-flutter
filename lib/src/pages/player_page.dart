@@ -8,16 +8,22 @@ import '../app_theme.dart';
 import '../demo_configuration.dart';
 import '../demo_downlink_session.dart';
 import '../demo_downlink_support.dart';
+import '../demo_echo_command.dart';
+import '../demo_permissions.dart';
 import '../demo_route_lifecycle.dart';
+import '../demo_stream_message.dart';
 import '../demo_test_hooks.dart';
 import '../demo_video_attach_flow.dart';
 import '../demo_widget_keys.dart';
-import '../widgets/command_panel.dart';
 import '../widgets/command_panel_model.dart';
+import '../widgets/command_panel_sheet.dart';
 import '../widgets/notice_dialog.dart';
 import '../widgets/downlink_center_loading.dart';
 import '../widgets/downlink_metrics_overlay.dart';
+import '../widgets/downlink_metrics_overlay_markers.dart';
+import '../widgets/downlink_metrics_overlay_model.dart';
 import '../widgets/player_page_widgets.dart';
+import '../widgets/stream_message_bubble.dart';
 
 enum _DownlinkViewState { idle, connecting, playing, failed }
 
@@ -42,7 +48,9 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
   static const Duration _metricsPollInterval = Duration(seconds: 1);
 
   final DemoDownlinkAudioSession _audioSession = DemoDownlinkAudioSession();
+  final DemoExamplePermissions _permissions = const DemoExamplePermissions();
   final DemoLogUploader _logUploader = DemoLogUploader();
+  final DemoEchoCommandResponder _echoResponder = DemoEchoCommandResponder();
   late final DemoDownlinkSession _session;
 
   _DownlinkViewState _downlinkState = _DownlinkViewState.idle;
@@ -51,9 +59,15 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
   int _sessionGeneration = 0;
   bool _uploadingLogs = false;
   bool _commandConnected = false;
+  bool _localAudioRunning = false;
+  bool _localAudioBusy = false;
+  int? _localAudioAttachedStreamId;
+  int _localAudioStartCount = 0;
+  int _localAudioStopCount = 0;
   bool _smokeConnectedMarked = false;
   bool _smokeAudioPlayingMarked = false;
   bool _smokeVideoRenderingMarked = false;
+  bool _hasRenderedVideoOnce = false;
   bool _smokeDebugStatsMarked = false;
   bool _smokeRenderWindowStarted = false;
   bool _smokeRenderWindowMarked = false;
@@ -64,6 +78,7 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
   DownlinkMetricsOverlayModel? _lastAvStatsOverlay;
   List<DemoCommandPanelEvent> _commandEvents = <DemoCommandPanelEvent>[];
   StateSetter? _commandSheetSetState;
+  final DemoStreamMessageOverlayController _streamMessageOverlay = DemoStreamMessageOverlayController();
 
   @override
   void initState() {
@@ -75,13 +90,16 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
   void dispose() {
     _sessionGeneration += 1;
     _stopMetricsPolling();
+    _streamMessageOverlay.dispose();
     _metricsOverlay = null;
     _lastAvStatsOverlay = null;
     _commandConnected = false;
+    _localAudioRunning = false;
+    _localAudioBusy = false;
+    _localAudioAttachedStreamId = null;
     _commandEvents = <DemoCommandPanelEvent>[];
     _commandSheetSetState = null;
     _clearSessionCallbacks();
-    _disconnectSession(reason: 'dispose');
     _session.dispose();
     super.dispose();
   }
@@ -115,6 +133,7 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     setState(() {
       _downlinkState = _DownlinkViewState.connecting;
       _stageStatusLabel = '连接中';
+      _hasRenderedVideoOnce = false;
     });
 
     TiRtcLogging.i(
@@ -153,6 +172,19 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
       return;
     }
 
+    final TiRtcOutputBufferStrategy outputBufferStrategy = _outputBufferStrategy(widget.configuration.settings);
+    final int audioOptionsCode = _session.setAudioOptions(bufferStrategy: outputBufferStrategy);
+    if (audioOptionsCode != 0) {
+      _clearSessionCallbacks();
+      _session.disconnectConnection();
+      _handleFailure(
+        generation: generation,
+        label: _downlinkErrorLabel(audioOptionsCode),
+        summary: 'Audio output buffer options failed with ${TiRtc.formatError(audioOptionsCode)}.',
+      );
+      return;
+    }
+
     final int audioAttachCode = _session.attachAudio(streamId: widget.configuration.audioStreamId);
     if (audioAttachCode != 0) {
       _clearSessionCallbacks();
@@ -171,7 +203,10 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
       sessionGeneration: generation,
       videoStreamId: videoStreamId,
       requestedPreference: requestedDecoderPreference,
-      applyOptions: () => _session.setVideoOptions(decoderPreference: requestedDecoderPreference),
+      applyOptions: () => _session.setVideoOptions(
+        decoderPreference: requestedDecoderPreference,
+        bufferStrategy: outputBufferStrategy,
+      ),
       attachVideo: () => _session.attachVideo(streamId: videoStreamId),
       log: (String message) => TiRtcLogging.i('flutter_example', message),
     );
@@ -202,7 +237,7 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
 
     if (!_acceptGeneration(generation)) {
       _clearSessionCallbacks();
-      _disconnectSession(reason: 'stale_start');
+      await _releaseSession(reason: 'stale_start');
       return;
     }
 
@@ -211,6 +246,12 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
         _stageStatusLabel = '连接中';
       });
     }
+  }
+
+  TiRtcOutputBufferStrategy _outputBufferStrategy(DemoExampleSettings settings) {
+    return settings.outputBufferPolicy == DemoExampleSettings.outputBufferPolicyNoBuffer
+        ? TiRtcOutputBufferStrategy.noBuffer
+        : TiRtcOutputBufferStrategy.automatic;
   }
 
   void _bindSessionCallbacks({required int generation}) {
@@ -253,6 +294,20 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
           payload: data,
         );
       },
+      onStreamMessage: (int streamId, int timestampMs, Uint8List data) {
+        _handleStreamMessage(
+          generation: generation,
+          streamId: streamId,
+          timestampMs: timestampMs,
+          payload: data,
+        );
+      },
+      onAudioInputStateChanged: (TiRtcInputState state) {
+        _handleLocalAudioInputState(generation: generation, state: state);
+      },
+      onAudioInputError: (int code, String? message) {
+        _handleLocalAudioInputError(generation: generation, code: code, message: message);
+      },
     );
   }
 
@@ -266,11 +321,15 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     required String nextStatusSummary,
   }) async {
     _sessionGeneration += 1;
+    if (!_smokeRenderWindowMarked) {
+      _smokeRenderWindowStarted = false;
+    }
     _stopMetricsPolling();
+    _streamMessageOverlay.clear();
     _clearMetricsOverlay();
     _clearCommandState();
     _clearSessionCallbacks();
-    _disconnectSession(reason: reason);
+    await _releaseSession(reason: reason);
     _shouldKeepPlaying = !clearIntent;
 
     if (!mounted) {
@@ -279,12 +338,23 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     setState(() {
       _downlinkState = _DownlinkViewState.idle;
       _stageStatusLabel = clearIntent ? '已停止' : '加载中';
+      _hasRenderedVideoOnce = false;
     });
   }
 
-  void _disconnectSession({required String reason}) {
-    _session.disconnect(reason: reason);
+  Future<void> _releaseSession({required String reason}) async {
+    await _session.release(reason: reason);
     _audioSession.releaseIfNeeded(reason: reason);
+    _localAudioAttachedStreamId = null;
+    if (!mounted) {
+      _localAudioRunning = false;
+      _localAudioBusy = false;
+      return;
+    }
+    setState(() {
+      _localAudioRunning = false;
+      _localAudioBusy = false;
+    });
   }
 
   void _clearMetricsOverlay() {
@@ -296,6 +366,7 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     setState(() {
       _metricsOverlay = null;
       _lastAvStatsOverlay = null;
+      _streamMessageOverlay.clear();
     });
   }
 
@@ -311,6 +382,44 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
       _commandEvents = <DemoCommandPanelEvent>[];
     });
     _refreshCommandSheet();
+  }
+
+  void _handleStreamMessage({
+    required int generation,
+    required int streamId,
+    required int timestampMs,
+    required Uint8List payload,
+  }) {
+    if (!_acceptGeneration(generation) || streamId != widget.configuration.videoStreamId) {
+      return;
+    }
+    final DemoStreamMessageReceiveEvent? event = _streamMessageOverlay.handleIncoming(
+      expectedStreamId: widget.configuration.videoStreamId,
+      streamId: streamId,
+      timestampMs: timestampMs,
+      payload: payload,
+      isActive: () => _acceptGeneration(generation),
+      onChanged: () {
+        if (mounted) {
+          setState(() {});
+        }
+      },
+    );
+    if (event == null) {
+      return;
+    }
+    TiRtcLogging.i(
+      'flutter_example',
+      'stream_message_received stream_id=${event.streamId} timestamp_ms=${event.timestampMs} '
+          'payload_epoch_seconds=${event.epochSeconds} count=${event.count}',
+    );
+    widget.smokeMarkerSink?.passed('stream_message_received', payload: <String, Object?>{
+      'stream_id': event.streamId,
+      'payload_epoch_seconds': event.epochSeconds,
+      'payload_bytes': event.payloadBytes,
+      'payload_hash': event.payloadHash,
+      'received_count': event.count,
+    });
   }
 
   void _startMetricsPolling({required int generation}) {
@@ -354,7 +463,7 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
         setMarked: () {
           _smokeDebugStatsMarked = true;
         },
-        payload: nextMetrics.debugMarkerPayload(sessionGeneration: generation),
+        payload: nextMetrics.smokeDebugMarkerPayload(sessionGeneration: generation),
       );
       _startSmokeRenderWindow(generation: generation);
     }
@@ -407,6 +516,7 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
         payload: <String, Object?>{'remote_id': widget.configuration.remoteId},
       );
       if (_downlinkState == _DownlinkViewState.playing) {
+        _setCommandConnected(true);
         return;
       }
       setState(() {
@@ -414,13 +524,12 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
         _downlinkState = _DownlinkViewState.connecting;
         _stageStatusLabel = '加载中';
       });
+      _refreshCommandSheet();
       return;
     }
 
     if (state == TiRtcConnState.disconnected) {
-      setState(() {
-        _commandConnected = false;
-      });
+      _setCommandConnected(false);
       if (errorCode == 0) {
         _handleFailure(
           generation: generation,
@@ -468,6 +577,47 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     }
   }
 
+  void _handleLocalAudioInputState({
+    required int generation,
+    required TiRtcInputState state,
+  }) {
+    if (!_acceptGeneration(generation)) {
+      return;
+    }
+    TiRtcLogging.i('flutter_example', 'local_audio_input_state state=${state.name}');
+    if (state == TiRtcInputState.running && !_localAudioRunning) {
+      setState(() {
+        _localAudioRunning = true;
+      });
+    } else if (state != TiRtcInputState.running && _localAudioRunning) {
+      setState(() {
+        _localAudioRunning = false;
+      });
+    }
+  }
+
+  void _handleLocalAudioInputError({
+    required int generation,
+    required int code,
+    String? message,
+  }) {
+    if (!_acceptGeneration(generation)) {
+      return;
+    }
+    TiRtcLogging.w('flutter_example', 'local_audio_input_error code=$code message=${message ?? ''}');
+    widget.smokeMarkerSink?.failure(
+      failureStage: 'local_audio_input',
+      message: 'local audio input failed',
+      errorCode: code,
+    );
+    if (mounted) {
+      setState(() {
+        _localAudioRunning = false;
+        _localAudioBusy = false;
+      });
+    }
+  }
+
   void _handleVideoState({
     required int generation,
     required TiRtcVideoOutputState state,
@@ -487,9 +637,12 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
       return;
     }
 
-    if (state == TiRtcVideoOutputState.rendering && _downlinkState == _DownlinkViewState.connecting) {
+    if (state == TiRtcVideoOutputState.rendering) {
       setState(() {
-        _downlinkState = _DownlinkViewState.playing;
+        if (_downlinkState == _DownlinkViewState.connecting) {
+          _downlinkState = _DownlinkViewState.playing;
+        }
+        _hasRenderedVideoOnce = true;
       });
       _markSmokeVideoRendering(generation: generation);
       _startMetricsPolling(generation: generation);
@@ -508,7 +661,7 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     _sessionGeneration += 1;
     _stopMetricsPolling();
     _clearSessionCallbacks();
-    _disconnectSession(reason: 'failure');
+    unawaited(_releaseSession(reason: 'failure'));
     setState(() {
       _downlinkState = _DownlinkViewState.failed;
       _stageStatusLabel = label;
@@ -516,6 +669,7 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
       _commandConnected = false;
     });
     TiRtcLogging.w('flutter_example', 'downlink_failed summary=$summary');
+    _refreshCommandSheet();
     _smokeFail(failureStage: 'downlink', message: summary);
   }
 
@@ -591,18 +745,16 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
         return;
       }
       final DownlinkMetricsOverlayModel markerStats = _lastAvStatsOverlay ?? metrics;
-      final Map<String, Object?> markerPayload = markerStats.debugMarkerPayload(sessionGeneration: generation);
+      final Map<String, Object?> markerPayload = markerStats.smokeRenderWindowMarkerPayload(
+        sessionGeneration: generation,
+      );
       _smokeRenderWindowMarked = true;
       widget.smokeMarkerSink?.passed('smoke_render_window_completed', payload: <String, Object?>{
+        ...markerPayload,
         'audio_error_count': _smokeAudioErrorCount,
         'video_error_count': _smokeVideoErrorCount,
         'audio_state': _session.audioState.name,
         'video_state': _session.videoState.name,
-        'audio_input_bitrate_kbps': markerPayload['audio_input_bitrate_kbps'],
-        'video_input_bitrate_kbps': markerPayload['video_input_bitrate_kbps'],
-        'video_render_fps': markerPayload['video_render_fps'],
-        'video_rate_window_duration_ms': markerPayload['video_rate_window_duration_ms'],
-        'runtime_focus_log': markerPayload['runtime_focus_log'],
       });
     }());
   }
@@ -623,10 +775,45 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
         createdAt: DateTime.now(),
       ),
     );
+    final int? echoCode = _echoResponder.handleReceived(
+      commandId: commandId,
+      payload: payload,
+      sendCommand: (int commandId, Uint8List payload) => _session.sendCommand(commandId: commandId, payload: payload),
+    );
+    if (echoCode != null) {
+      _appendCommandEvent(
+        DemoCommandPanelEvent(
+          direction: DemoCommandEventDirection.sent,
+          commandId: commandId,
+          payload: payload,
+          resultCode: echoCode,
+          createdAt: DateTime.now(),
+        ),
+      );
+    }
+  }
+
+  void _setCommandConnected(bool connected) {
+    if (_commandConnected == connected) {
+      return;
+    }
+    if (!mounted) {
+      _commandConnected = connected;
+      return;
+    }
+    setState(() {
+      _commandConnected = connected;
+    });
+    _refreshCommandSheet();
   }
 
   Future<int> _sendCommand(int commandId, Uint8List payload) async {
     final int code = _session.sendCommand(commandId: commandId, payload: payload);
+    _echoResponder.trackLocalSend(
+      commandId: commandId,
+      payload: payload,
+      resultCode: code,
+    );
     _appendCommandEvent(
       DemoCommandPanelEvent(
         direction: DemoCommandEventDirection.sent,
@@ -722,79 +909,18 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
   }
 
   Future<void> _showCommandPanel() {
-    return showModalBottomSheet<void>(
+    return showDemoCommandPanelSheet(
       context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      barrierColor: Colors.transparent,
-      backgroundColor: Colors.transparent,
-      builder: (BuildContext sheetContext) {
-        return StatefulBuilder(
-          builder: (BuildContext context, StateSetter setSheetState) {
-            _commandSheetSetState = setSheetState;
-            return Padding(
-              padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
-              child: Container(
-                height: MediaQuery.sizeOf(context).height / 2,
-                decoration: const BoxDecoration(
-                  color: ExampleTheme.background,
-                  borderRadius: BorderRadius.only(
-                    topLeft: Radius.circular(16),
-                    topRight: Radius.circular(16),
-                  ),
-                ),
-                child: Column(
-                  children: <Widget>[
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                      child: Row(
-                        children: <Widget>[
-                          const Expanded(
-                            child: Text(
-                              '发送命令',
-                              style: TextStyle(
-                                color: ExampleTheme.textPrimary,
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                          IconButton(
-                            onPressed: () => Navigator.of(sheetContext).pop(),
-                            icon: const Icon(
-                              Icons.close_rounded,
-                              color: ExampleTheme.textHint,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const Divider(height: 1, color: ExampleTheme.inputBorder),
-                    Expanded(
-                      child: DemoCommandPanel(
-                        connected: _commandConnected,
-                        events: _commandEvents,
-                        onSendCommand: (int commandId, Uint8List payload) async {
-                          final int code = await _sendCommand(commandId, payload);
-                          if (sheetContext.mounted) {
-                            setSheetState(() {});
-                          }
-                          return code;
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
+      title: '发送命令',
+      connected: () => _commandConnected,
+      events: () => _commandEvents,
+      onSendCommand: _sendCommand,
+      onSheetStateChanged: (StateSetter? setState) {
+        if (mounted) {
+          _commandSheetSetState = setState;
+        }
       },
-    ).whenComplete(() {
-      if (mounted) {
-        _commandSheetSetState = null;
-      }
-    });
+    );
   }
 
   @override
@@ -830,7 +956,7 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
           Positioned.fill(
             child: DownlinkVideoStage(
               videoView: _session.buildVideoView(),
-              showStageOverlay: _downlinkState != _DownlinkViewState.playing,
+              showStageOverlay: _showStageOverlay,
               stageStatusLabel: _stageStatusLabel,
               indicatorMode: _centerIndicatorMode,
             ),
@@ -857,12 +983,35 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
                   const Spacer(),
+                  if (_streamMessageOverlay.text != null)
+                    Align(
+                      alignment: Alignment.bottomRight,
+                      child: StreamMessageBubble(
+                        text: _streamMessageOverlay.text!,
+                      ),
+                    ),
+                  if (_streamMessageOverlay.text != null) const SizedBox(height: 12),
                   Align(
                     alignment: Alignment.bottomRight,
-                    child: DownlinkControlButton(
-                      connecting: connecting,
-                      playing: playing,
-                      onPressed: _toggleDownlink,
+                    child: Wrap(
+                      spacing: 12,
+                      runSpacing: 12,
+                      alignment: WrapAlignment.end,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: <Widget>[
+                        LocalAudioControlButton(
+                          key: DemoWidgetKeys.playerLocalAudioButton,
+                          enabled: _commandConnected,
+                          busy: _localAudioBusy,
+                          running: _localAudioRunning,
+                          onPressed: _toggleLocalAudio,
+                        ),
+                        DownlinkControlButton(
+                          connecting: connecting,
+                          playing: playing,
+                          onPressed: _toggleDownlink,
+                        ),
+                      ],
                     ),
                   ),
                 ],
@@ -889,6 +1038,192 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     unawaited(_startDownlink(reason: 'manual_start'));
   }
 
+  void _toggleLocalAudio() {
+    if (_localAudioRunning) {
+      unawaited(_stopLocalAudio(reason: 'manual_stop'));
+      return;
+    }
+    unawaited(_startLocalAudio());
+  }
+
+  Future<void> _startLocalAudio() async {
+    if (_localAudioBusy || !_commandConnected) {
+      return;
+    }
+    setState(() {
+      _localAudioBusy = true;
+    });
+
+    final bool microphoneReady =
+        await _permissions.checkMicrophonePermission() || await _permissions.requestMicrophonePermission();
+    if (!mounted || !_commandConnected) {
+      if (mounted) {
+        setState(() {
+          _localAudioBusy = false;
+        });
+      }
+      return;
+    }
+    if (!microphoneReady) {
+      TiRtcLogging.w('flutter_example', 'local_audio_input_permission_denied');
+      widget.smokeMarkerSink?.failure(
+        failureStage: 'local_audio_permission',
+        message: 'microphone permission denied',
+      );
+      _showLocalAudioSnack('麦克风权限未授权。');
+      if (mounted) {
+        setState(() {
+          _localAudioBusy = false;
+        });
+      }
+      return;
+    }
+
+    final DemoExampleSettings settings = widget.configuration.settings;
+    final int streamId = settings.localAudioStreamId;
+    final TiRtcAudioInputOptions options = _localAudioOptions(settings);
+    TiRtcLogging.i(
+      'flutter_example',
+      'local_audio_input_start_requested stream_id=$streamId '
+          'codec=${settings.localAudioCodec} sample_rate_hz=${settings.localAudioSampleRateHz} '
+          'aec=${settings.localAudioAecEnabled} agc=${settings.localAudioAgcLevel} ans=${settings.localAudioAnsLevel}',
+    );
+
+    int code = await _session.prepareLocalAudio(audioOptions: options);
+    final int? previousStreamId = _localAudioAttachedStreamId;
+    if (code == 0 && _localAudioAttachedStreamId != streamId) {
+      if (_localAudioAttachedStreamId != null) {
+        await _session.stopLocalAudio();
+        await _session.detachLocalAudioFromBoundConnection();
+        _localAudioAttachedStreamId = null;
+      }
+      code = await _session.attachLocalAudio(streamId: streamId);
+      if (code == 0) {
+        widget.smokeMarkerSink?.passed('local_audio_input_attached', payload: <String, Object?>{
+          'stream_id': streamId,
+          'previous_stream_id': previousStreamId,
+        });
+        _localAudioAttachedStreamId = streamId;
+      }
+    }
+    final bool reusedBinding = code == 0 && previousStreamId == streamId;
+    if (code == 0) {
+      code = await _session.startLocalAudio();
+    }
+    if (code == 0) {
+      _localAudioStartCount += 1;
+      TiRtcLogging.i(
+        'flutter_example',
+        'local_audio_input_start_done stream_id=$streamId start_count=$_localAudioStartCount reused_binding=$reusedBinding',
+      );
+      widget.smokeMarkerSink?.passed('local_audio_input_started', payload: <String, Object?>{
+        'stream_id': streamId,
+        'start_count': _localAudioStartCount,
+        'stop_count': _localAudioStopCount,
+        'reused_binding': reusedBinding,
+      });
+      if (mounted) {
+        setState(() {
+          _localAudioRunning = true;
+          _localAudioBusy = false;
+        });
+      }
+      return;
+    }
+
+    TiRtcLogging.w('flutter_example', 'local_audio_input_start_failed code=$code');
+    widget.smokeMarkerSink?.failure(
+      failureStage: 'local_audio_start',
+      message: 'local audio input start failed',
+      errorCode: code,
+    );
+    _showLocalAudioSnack('麦克风启动失败 · ${TiRtc.formatError(code)}');
+    if (mounted) {
+      setState(() {
+        _localAudioRunning = false;
+        _localAudioBusy = false;
+      });
+    }
+  }
+
+  Future<void> _stopLocalAudio({required String reason}) async {
+    if (_localAudioBusy) {
+      return;
+    }
+    setState(() {
+      _localAudioBusy = true;
+    });
+    TiRtcLogging.i('flutter_example', 'local_audio_input_stop_requested reason=$reason');
+    final int code = await _session.stopLocalAudio();
+    if (code == 0) {
+      _localAudioStopCount += 1;
+      TiRtcLogging.i('flutter_example', 'local_audio_input_stop_done stop_count=$_localAudioStopCount');
+      widget.smokeMarkerSink?.passed('local_audio_input_stopped', payload: <String, Object?>{
+        'stream_id': _localAudioAttachedStreamId,
+        'start_count': _localAudioStartCount,
+        'stop_count': _localAudioStopCount,
+      });
+      if (mounted) {
+        setState(() {
+          _localAudioRunning = false;
+          _localAudioBusy = false;
+        });
+      }
+      return;
+    }
+    TiRtcLogging.w('flutter_example', 'local_audio_input_stop_failed code=$code');
+    _showLocalAudioSnack('麦克风停止失败 · ${TiRtc.formatError(code)}');
+    if (mounted) {
+      setState(() {
+        _localAudioBusy = false;
+      });
+    }
+  }
+
+  TiRtcAudioInputOptions _localAudioOptions(DemoExampleSettings settings) {
+    return TiRtcAudioInputOptions(
+      codec: switch (settings.localAudioCodec) {
+        DemoExampleSettings.localAudioCodecAac => TiRtcAudioCodec.aac,
+        DemoExampleSettings.localAudioCodecPcm => TiRtcAudioCodec.pcm,
+        _ => TiRtcAudioCodec.g711a,
+      },
+      sampleRate: settings.localAudioSampleRateHz == DemoExampleSettings.localAudioSampleRate8k
+          ? TiRtcAudioSampleRate.rate8k
+          : TiRtcAudioSampleRate.rate16k,
+      channels: TiRtcAudioChannelCount.mono,
+      aecMode: settings.localAudioAecEnabled ? TiRtcAudioAecMode.enabled : TiRtcAudioAecMode.disabled,
+      agcLevel: _localAudioAgcLevel(settings.localAudioAgcLevel),
+      ansLevel: _localAudioAnsLevel(settings.localAudioAnsLevel),
+    );
+  }
+
+  TiRtcAudioAgcLevel _localAudioAgcLevel(int value) {
+    return switch (value) {
+      1 => TiRtcAudioAgcLevel.low,
+      2 => TiRtcAudioAgcLevel.medium,
+      3 => TiRtcAudioAgcLevel.high,
+      _ => TiRtcAudioAgcLevel.disabled,
+    };
+  }
+
+  TiRtcAudioAnsLevel _localAudioAnsLevel(int value) {
+    return switch (value) {
+      1 => TiRtcAudioAnsLevel.low,
+      2 => TiRtcAudioAnsLevel.medium,
+      3 => TiRtcAudioAnsLevel.high,
+      _ => TiRtcAudioAnsLevel.disabled,
+    };
+  }
+
+  void _showLocalAudioSnack(String message) {
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
   DownlinkCenterIndicatorMode get _centerIndicatorMode {
     if (_downlinkState == _DownlinkViewState.connecting) {
       return DownlinkCenterIndicatorMode.loading;
@@ -903,5 +1238,18 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     }
 
     return DownlinkCenterIndicatorMode.loading;
+  }
+
+  bool get _showStageOverlay {
+    if (_downlinkState == _DownlinkViewState.playing) {
+      return false;
+    }
+    if (_downlinkState == _DownlinkViewState.failed) {
+      return true;
+    }
+    if (_downlinkState == _DownlinkViewState.idle && !_shouldKeepPlaying) {
+      return true;
+    }
+    return !_hasRenderedVideoOnce;
   }
 }

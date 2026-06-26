@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
+import '../demo_configuration.dart';
 import '../demo_widget_keys.dart';
+import 'token_acquisition_section.dart';
 
 class ConfigurePageBackground extends StatelessWidget {
   const ConfigurePageBackground({
@@ -49,16 +51,12 @@ class ConfigurePageBackground extends StatelessWidget {
 class ConfigureHeader extends StatelessWidget {
   const ConfigureHeader({
     super.key,
-    required this.scanSupported,
     required this.startingPlayer,
     required this.onOpenSettings,
-    required this.onScanToken,
   });
 
-  final bool scanSupported;
   final bool startingPlayer;
   final VoidCallback onOpenSettings;
-  final VoidCallback onScanToken;
 
   @override
   Widget build(BuildContext context) {
@@ -79,44 +77,25 @@ class ConfigureHeader extends StatelessWidget {
             style: titleStyle,
           ),
         ),
-        IconButton(
-          tooltip: '设置',
+        TextButton(
           onPressed: startingPlayer ? null : onOpenSettings,
-          style: IconButton.styleFrom(
+          style: TextButton.styleFrom(
             foregroundColor: startingPlayer ? ExampleTheme.textHint : ExampleTheme.primary,
-            backgroundColor: ExampleTheme.surface.withAlpha(214),
-            minimumSize: const Size.square(40),
+            backgroundColor: Colors.transparent,
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            minimumSize: const Size(0, 40),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(999),
               side: BorderSide(
-                color: (startingPlayer ? ExampleTheme.textHint : ExampleTheme.primary).withAlpha(64),
+                color: (startingPlayer ? ExampleTheme.textHint : ExampleTheme.primary).withAlpha(180),
               ),
             ),
           ),
-          icon: const Icon(Icons.settings_rounded, size: 18),
+          child: const Text(
+            '偏好设置',
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+          ),
         ),
-        const SizedBox(width: 8),
-        if (scanSupported)
-          TextButton.icon(
-            onPressed: startingPlayer ? null : onScanToken,
-            style: TextButton.styleFrom(
-              foregroundColor: startingPlayer ? ExampleTheme.textHint : ExampleTheme.primary,
-              backgroundColor: ExampleTheme.surface.withAlpha(214),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              minimumSize: const Size(0, 40),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(999),
-                side: BorderSide(
-                  color: (startingPlayer ? ExampleTheme.textHint : ExampleTheme.primary).withAlpha(64),
-                ),
-              ),
-            ),
-            icon: const Icon(Icons.qr_code_scanner_rounded, size: 18),
-            label: const Text(
-              '扫一扫',
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-            ),
-          ),
       ],
     );
   }
@@ -135,26 +114,25 @@ class ConfigureDeviceEntryLink extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final Color textColor = startingPlayer ? ExampleTheme.textHint : ExampleTheme.textSecondary;
-    return Align(
-      alignment: Alignment.center,
-      child: TextButton(
-        key: DemoWidgetKeys.openDeviceServerButton,
-        onPressed: startingPlayer ? null : onOpenDeviceServer,
-        style: TextButton.styleFrom(
-          foregroundColor: textColor,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          minimumSize: const Size(0, 36),
-          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        ),
-        child: Text(
-          '作为设备端启动',
-          style: TextStyle(
-            color: textColor,
-            fontSize: 13,
-            fontWeight: FontWeight.w500,
-            decoration: TextDecoration.underline,
-            decorationColor: textColor,
-          ),
+    return TextButton(
+      key: DemoWidgetKeys.openDeviceServerButton,
+      onPressed: startingPlayer ? null : onOpenDeviceServer,
+      style: TextButton.styleFrom(
+        foregroundColor: textColor,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        minimumSize: const Size(0, 36),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      child: Text(
+        '或者，将本机作为设备端启动',
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          color: textColor,
+          fontSize: 13,
+          fontStyle: FontStyle.italic,
+          fontWeight: FontWeight.w700,
+          decoration: TextDecoration.underline,
+          decorationColor: textColor,
         ),
       ),
     );
@@ -172,9 +150,16 @@ class ConfigureForm extends StatelessWidget {
     required this.remoteIdController,
     required this.audioStreamIdController,
     required this.videoStreamIdController,
+    required this.tokenSource,
+    required this.tokenIssuerBaseUrlController,
     required this.tokenController,
     required this.validateEndpoint,
     required this.validateStreamId,
+    required this.validateTokenIssuerBaseUrl,
+    required this.validateOneTimeToken,
+    required this.onTokenSourceChanged,
+    required this.scanSupported,
+    required this.onScanToken,
     required this.onStartPlaying,
   });
 
@@ -186,52 +171,97 @@ class ConfigureForm extends StatelessWidget {
   final TextEditingController remoteIdController;
   final TextEditingController audioStreamIdController;
   final TextEditingController videoStreamIdController;
+  final DemoTokenSource tokenSource;
+  final TextEditingController tokenIssuerBaseUrlController;
   final TextEditingController tokenController;
   final FormFieldValidator<String> validateEndpoint;
   final FormFieldValidator<String> validateStreamId;
+  final FormFieldValidator<String> validateTokenIssuerBaseUrl;
+  final FormFieldValidator<String> validateOneTimeToken;
+  final ValueChanged<DemoTokenSource> onTokenSourceChanged;
+  final bool scanSupported;
+  final VoidCallback onScanToken;
   final VoidCallback onStartPlaying;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: ExampleTheme.surface.withAlpha(224),
-        borderRadius: BorderRadius.circular(30),
+    return Form(
+      key: formKey,
+      autovalidateMode: submitted ? AutovalidateMode.always : AutovalidateMode.disabled,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          _AppIdEndpointRow(
+            appIdController: appIdController,
+            endpointController: endpointController,
+            enabled: !startingPlayer,
+            validateEndpoint: validateEndpoint,
+          ),
+          const SizedBox(height: 16),
+          _RemoteIdField(controller: remoteIdController, enabled: !startingPlayer),
+          const SizedBox(height: 16),
+          _StreamIdRow(
+            audioStreamIdController: audioStreamIdController,
+            videoStreamIdController: videoStreamIdController,
+            enabled: !startingPlayer,
+            validator: validateStreamId,
+          ),
+          const SizedBox(height: 16),
+          ConfigureTokenAcquisitionSection(
+            source: tokenSource,
+            tokenIssuerBaseUrlController: tokenIssuerBaseUrlController,
+            tokenController: tokenController,
+            enabled: !startingPlayer,
+            scanSupported: scanSupported,
+            validateTokenIssuerBaseUrl: validateTokenIssuerBaseUrl,
+            validateOneTimeToken: validateOneTimeToken,
+            onSourceChanged: onTokenSourceChanged,
+            onScanToken: onScanToken,
+          ),
+          const SizedBox(height: 20),
+          FilledButton(
+            key: DemoWidgetKeys.startDownlinkButton,
+            onPressed: startingPlayer ? null : onStartPlaying,
+            child: _EnterPlayerButtonLabel(startingPlayer: startingPlayer),
+          ),
+        ],
       ),
-      child: Form(
-        key: formKey,
-        autovalidateMode: submitted ? AutovalidateMode.always : AutovalidateMode.disabled,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: <Widget>[
-            _AppIdField(controller: appIdController, enabled: !startingPlayer),
-            const SizedBox(height: 16),
-            _EndpointField(
-              controller: endpointController,
-              enabled: !startingPlayer,
-              validator: validateEndpoint,
-            ),
-            const SizedBox(height: 16),
-            _RemoteIdField(controller: remoteIdController, enabled: !startingPlayer),
-            const SizedBox(height: 16),
-            _StreamIdRow(
-              audioStreamIdController: audioStreamIdController,
-              videoStreamIdController: videoStreamIdController,
-              enabled: !startingPlayer,
-              validator: validateStreamId,
-            ),
-            const SizedBox(height: 16),
-            _TokenField(controller: tokenController, enabled: !startingPlayer),
-            const SizedBox(height: 20),
-            FilledButton(
-              key: DemoWidgetKeys.startDownlinkButton,
-              onPressed: startingPlayer ? null : onStartPlaying,
-              child: _EnterPlayerButtonLabel(startingPlayer: startingPlayer),
-            ),
-          ],
+    );
+  }
+}
+
+class _AppIdEndpointRow extends StatelessWidget {
+  const _AppIdEndpointRow({
+    required this.appIdController,
+    required this.endpointController,
+    required this.enabled,
+    required this.validateEndpoint,
+  });
+
+  final TextEditingController appIdController;
+  final TextEditingController endpointController;
+  final bool enabled;
+  final FormFieldValidator<String> validateEndpoint;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Expanded(
+          flex: 1,
+          child: _AppIdField(controller: appIdController, enabled: enabled),
         ),
-      ),
+        const SizedBox(width: 12),
+        Expanded(
+          flex: 2,
+          child: _EndpointField(
+            controller: endpointController,
+            enabled: enabled,
+            validator: validateEndpoint,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -376,39 +406,6 @@ class _StreamIdRow extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-class _TokenField extends StatelessWidget {
-  const _TokenField({
-    required this.controller,
-    required this.enabled,
-  });
-
-  final TextEditingController controller;
-  final bool enabled;
-
-  @override
-  Widget build(BuildContext context) {
-    return TextFormField(
-      key: DemoWidgetKeys.tokenField,
-      controller: controller,
-      enabled: enabled,
-      minLines: 3,
-      maxLines: 5,
-      style: const TextStyle(fontSize: 13),
-      decoration: const InputDecoration(
-        labelText: 'token',
-        hintText: '进行一次连接所需的有效 token',
-        alignLabelWithHint: true,
-      ),
-      validator: (String? value) {
-        if ((value ?? '').trim().isEmpty) {
-          return 'token 为必填项。';
-        }
-        return null;
-      },
     );
   }
 }

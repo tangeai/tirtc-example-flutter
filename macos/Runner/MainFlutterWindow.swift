@@ -41,10 +41,14 @@ class MainFlutterWindow: NSWindow {
     )
     channel.setMethodCallHandler { call, result in
       switch call.method {
-      case "checkLocalMediaPermissions":
-        result(self.localMediaPermissionsGranted())
-      case "requestLocalMediaPermissions":
-        self.requestLocalMediaPermissions(result: result)
+      case "checkCameraPermission":
+        result(self.capturePermissionGranted(for: .video))
+      case "requestCameraPermission":
+        self.requestCaptureAccessIfNeeded(for: .video, result: result)
+      case "checkMicrophonePermission":
+        result(self.capturePermissionGranted(for: .audio))
+      case "requestMicrophonePermission":
+        self.requestCaptureAccessIfNeeded(for: .audio, result: result)
       case "requestLocalNetworkPermission":
         result(true)
       default:
@@ -146,20 +150,13 @@ class MainFlutterWindow: NSWindow {
     return (key, value)
   }
 
-  private func localMediaPermissionsGranted() -> Bool {
-    AVCaptureDevice.authorizationStatus(for: .video) == .authorized &&
-      AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+  private func capturePermissionGranted(for mediaType: AVMediaType) -> Bool {
+    AVCaptureDevice.authorizationStatus(for: mediaType) == .authorized
   }
 
-  private func requestLocalMediaPermissions(result: @escaping FlutterResult) {
-    requestCaptureAccessIfNeeded(for: .video) { videoGranted in
-      guard videoGranted else {
-        result(false)
-        return
-      }
-      self.requestCaptureAccessIfNeeded(for: .audio) { audioGranted in
-        result(audioGranted)
-      }
+  private func requestCaptureAccessIfNeeded(for mediaType: AVMediaType, result: @escaping FlutterResult) {
+    requestCaptureAccessIfNeeded(for: mediaType) { granted in
+      result(granted)
     }
   }
 

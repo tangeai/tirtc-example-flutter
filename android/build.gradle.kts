@@ -1,5 +1,26 @@
+val tirtcAndroidLocalMavenRepo: String? =
+    providers.gradleProperty("TIRTC_FLUTTER_ANDROID_LOCAL_MAVEN").orNull
+        ?: run {
+            val localPropertiesFile = rootProject.file("local.properties")
+            if (!localPropertiesFile.isFile) {
+                null
+            } else {
+                val localProperties = java.util.Properties()
+                localPropertiesFile.inputStream().use { stream ->
+                    localProperties.load(stream)
+                }
+                localProperties.getProperty("tirtc.flutter.android.localMaven")?.takeIf { it.isNotBlank() }
+            }
+        }
+        ?: providers.environmentVariable("TIRTC_FLUTTER_ANDROID_LOCAL_MAVEN").orNull
+
 allprojects {
     repositories {
+        if (tirtcAndroidLocalMavenRepo != null) {
+            maven {
+                url = uri(tirtcAndroidLocalMavenRepo)
+            }
+        }
         google()
         mavenCentral()
         maven {

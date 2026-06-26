@@ -1,8 +1,12 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import '../demo_echo_command.dart';
+
 const int demoCommandPanelEventLimit = 20;
 const int _maxCommandId = 0xffffffff;
+const int demoCommandEchoPresetId = demoEchoCommandId;
+const String demoCommandEchoPresetPayload = demoEchoCommandPayloadText;
 
 enum DemoCommandPayloadMode {
   hex,
@@ -49,6 +53,31 @@ final class DemoCommandPanelEvent {
 
   String get payloadHex => formatDemoCommandPayloadHex(payload);
 }
+
+final class DemoCommandPreset {
+  const DemoCommandPreset({
+    required this.label,
+    required this.commandId,
+    required this.payloadMode,
+    required this.payloadText,
+  });
+
+  final String label;
+  final int commandId;
+  final DemoCommandPayloadMode payloadMode;
+  final String payloadText;
+
+  String get commandIdLabel => formatDemoCommandId(commandId);
+}
+
+const List<DemoCommandPreset> demoCommonCommandPresets = <DemoCommandPreset>[
+  DemoCommandPreset(
+    label: 'Echo',
+    commandId: demoCommandEchoPresetId,
+    payloadMode: DemoCommandPayloadMode.text,
+    payloadText: demoCommandEchoPresetPayload,
+  ),
+];
 
 DemoCommandParseResult<int> parseDemoCommandId(String input) {
   final String value = input.trim();

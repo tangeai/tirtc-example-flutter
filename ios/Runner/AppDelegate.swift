@@ -7,7 +7,9 @@ import UIKit
 @objc class AppDelegate: FlutterAppDelegate {
   private let preferencesChannelName = "tirtc_av_kit_example/preferences"
   private let preferencesKeyPrefix = "tirtc_av_kit_example."
+  private let localNetworkPermissionTimeoutSeconds: TimeInterval = 12.0
   private var localNetworkBrowser: NWBrowser?
+  private var localNetworkPermissionResults: [FlutterResult] = []
 
   override func application(
     _ application: UIApplication,
@@ -30,10 +32,14 @@ import UIKit
           return
         }
         switch call.method {
-        case "checkLocalMediaPermissions":
-          result(self.localMediaPermissionsGranted())
-        case "requestLocalMediaPermissions":
-          self.requestLocalMediaPermissions(result: result)
+        case "checkCameraPermission":
+          result(self.capturePermissionGranted(for: .video))
+        case "requestCameraPermission":
+          self.requestCaptureAccessIfNeeded(for: .video, result: result)
+        case "checkMicrophonePermission":
+          result(self.capturePermissionGranted(for: .audio))
+        case "requestMicrophonePermission":
+          self.requestCaptureAccessIfNeeded(for: .audio, result: result)
         case "requestLocalNetworkPermission":
           self.requestLocalNetworkPermission(result: result)
         default:
@@ -141,8 +147,8 @@ import UIKit
   }
 
   private func requestLocalNetworkPermission(result: @escaping FlutterResult) {
+    localNetworkPermissionResults.append(result)
     if localNetworkBrowser != nil {
-      result(true)
       return
     }
 
@@ -153,8 +159,17 @@ import UIKit
     )
     browser.stateUpdateHandler = { state in
       switch state {
+      case .ready:
+        NSLog("[TiRTCLab] local network browser ready")
+        self.completeLocalNetworkPermissionRequest(granted: true, reason: "ready")
+      case .waiting(let error):
+        NSLog("[TiRTCLab] local network browser waiting: %@", String(describing: error))
+        if self.isLocalNetworkPolicyDenied(error) {
+          self.completeLocalNetworkPermissionRequest(granted: false, reason: "policy_denied")
+        }
       case .failed(let error):
         NSLog("[TiRTCLab] local network browser failed: %@", String(describing: error))
+        self.completeLocalNetworkPermissionRequest(granted: false, reason: "failed")
       default:
         break
       }
@@ -163,27 +178,40 @@ import UIKit
     localNetworkBrowser = browser
     browser.start(queue: .main)
 
-    DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
-      self?.localNetworkBrowser?.cancel()
-      self?.localNetworkBrowser = nil
-    }
-    result(true)
-  }
-
-  private func localMediaPermissionsGranted() -> Bool {
-    AVCaptureDevice.authorizationStatus(for: .video) == .authorized &&
-      AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-  }
-
-  private func requestLocalMediaPermissions(result: @escaping FlutterResult) {
-    requestCaptureAccessIfNeeded(for: .video) { videoGranted in
-      guard videoGranted else {
-        result(false)
+    DispatchQueue.main.asyncAfter(deadline: .now() + localNetworkPermissionTimeoutSeconds) { [weak self, weak browser] in
+      guard let self, self.localNetworkBrowser === browser else {
         return
       }
-      self.requestCaptureAccessIfNeeded(for: .audio) { audioGranted in
-        result(audioGranted)
-      }
+      self.completeLocalNetworkPermissionRequest(granted: false, reason: "timeout")
+    }
+  }
+
+  private func completeLocalNetworkPermissionRequest(granted: Bool, reason: String) {
+    guard !localNetworkPermissionResults.isEmpty else {
+      return
+    }
+
+    NSLog("[TiRTCLab] local network permission preflight completed granted=%@ reason=%@", granted.description, reason)
+    let results = localNetworkPermissionResults
+    localNetworkPermissionResults.removeAll()
+    localNetworkBrowser?.cancel()
+    localNetworkBrowser = nil
+    for result in results {
+      result(granted)
+    }
+  }
+
+  private func isLocalNetworkPolicyDenied(_ error: NWError) -> Bool {
+    String(describing: error).localizedCaseInsensitiveContains("PolicyDenied")
+  }
+
+  private func capturePermissionGranted(for mediaType: AVMediaType) -> Bool {
+    AVCaptureDevice.authorizationStatus(for: mediaType) == .authorized
+  }
+
+  private func requestCaptureAccessIfNeeded(for mediaType: AVMediaType, result: @escaping FlutterResult) {
+    requestCaptureAccessIfNeeded(for: mediaType) { granted in
+      result(granted)
     }
   }
 

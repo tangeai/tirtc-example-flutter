@@ -202,3 +202,46 @@ class DownlinkControlButton extends StatelessWidget {
     );
   }
 }
+
+class LocalAudioControlButton extends StatelessWidget {
+  const LocalAudioControlButton({
+    Key? key,
+    required this.enabled,
+    required this.busy,
+    required this.running,
+    required this.onPressed,
+  })  : _buttonKey = key,
+        super(key: null);
+
+  final Key? _buttonKey;
+  final bool enabled;
+  final bool busy;
+  final bool running;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return FilledButton.icon(
+      key: _buttonKey,
+      onPressed: enabled && !busy ? onPressed : null,
+      style: FilledButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+        backgroundColor: running ? Colors.orangeAccent.shade700 : ExampleTheme.surface,
+        foregroundColor: running ? Colors.white : ExampleTheme.primary,
+      ),
+      icon: busy
+          ? SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                valueColor: AlwaysStoppedAnimation<Color>(
+                  running ? Colors.white : ExampleTheme.primary,
+                ),
+              ),
+            )
+          : Icon(running ? Icons.mic_off_rounded : Icons.mic_rounded),
+      label: Text(running ? '停止麦克风' : '启动麦克风'),
+    );
+  }
+}

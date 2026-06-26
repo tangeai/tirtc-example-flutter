@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:tirtc_av_kit/tirtc_av_kit.dart';
 
 import '../app_theme.dart';
+import '../demo_widget_keys.dart';
 import 'command_panel_model.dart';
 
 typedef DemoCommandSender = FutureOr<int> Function(int commandId, Uint8List payload);
@@ -57,6 +58,7 @@ class _DemoCommandPanelState extends State<DemoCommandPanel> {
             children: <Widget>[
               Expanded(
                 child: TextField(
+                  key: DemoWidgetKeys.commandPanelCommandIdField,
                   controller: _commandIdController,
                   enabled: !_sending,
                   style: const TextStyle(fontSize: 12),
@@ -94,6 +96,7 @@ class _DemoCommandPanelState extends State<DemoCommandPanel> {
           ),
           const SizedBox(height: 8),
           TextField(
+            key: DemoWidgetKeys.commandPanelPayloadField,
             controller: _payloadController,
             enabled: !_sending,
             minLines: 1,
@@ -107,9 +110,15 @@ class _DemoCommandPanelState extends State<DemoCommandPanel> {
             ),
           ),
           const SizedBox(height: 10),
+          _CommonCommandPresetBar(
+            enabled: !_sending,
+            onSelected: _applyPreset,
+          ),
+          const SizedBox(height: 10),
           Align(
             alignment: Alignment.centerRight,
             child: FilledButton.icon(
+              key: DemoWidgetKeys.commandPanelSendButton,
               onPressed: widget.connected && !_sending ? _send : null,
               style: FilledButton.styleFrom(
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -178,6 +187,55 @@ class _DemoCommandPanelState extends State<DemoCommandPanel> {
       }
     }
   }
+
+  void _applyPreset(DemoCommandPreset preset) {
+    setState(() {
+      _commandIdController.text = preset.commandIdLabel;
+      _payloadMode = preset.payloadMode;
+      _payloadController.text = preset.payloadText;
+      _inputError = null;
+    });
+  }
+}
+
+class _CommonCommandPresetBar extends StatelessWidget {
+  const _CommonCommandPresetBar({
+    required this.enabled,
+    required this.onSelected,
+  });
+
+  final bool enabled;
+  final ValueChanged<DemoCommandPreset> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        const Text(
+          '常用命令',
+          style: TextStyle(
+            color: ExampleTheme.textSecondary,
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: demoCommonCommandPresets.map((DemoCommandPreset preset) {
+            return ActionChip(
+              key: preset.commandId == demoCommandEchoPresetId ? DemoWidgetKeys.commandPanelEchoPreset : null,
+              label: Text(preset.label),
+              visualDensity: VisualDensity.compact,
+              onPressed: enabled ? () => onSelected(preset) : null,
+            );
+          }).toList(growable: false),
+        ),
+      ],
+    );
+  }
 }
 
 class _ConnectionPill extends StatelessWidget {
@@ -234,6 +292,7 @@ class _CommandEventRow extends StatelessWidget {
     final bool sent = event.direction == DemoCommandEventDirection.sent;
     final Color color = sent ? ExampleTheme.primary : ExampleTheme.textPrimary;
     return DecoratedBox(
+      key: DemoWidgetKeys.commandPanelEvent(sent ? 'sent' : 'received', event.commandIdLabel),
       decoration: BoxDecoration(
         color: color.withAlpha(18),
         borderRadius: BorderRadius.circular(10),

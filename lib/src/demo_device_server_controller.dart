@@ -7,13 +7,18 @@ import 'package:tirtc_av_kit/tirtc_av_kit.dart';
 
 import 'demo_configuration.dart';
 import 'demo_downlink_session.dart';
+import 'demo_echo_command.dart';
+import 'demo_stream_message.dart';
 import 'demo_test_hooks.dart';
+import 'widgets/command_panel_model.dart';
 
 typedef DemoDeviceServerPermissionRequest = Future<bool> Function();
 
 final class DemoDeviceServerController extends ChangeNotifier {
   static const Duration _performanceMeasureHealthInterval = Duration(seconds: 1);
   static const Duration _serviceStartTimeout = Duration(seconds: 10);
+  static const Duration _serviceConnectTimeout = Duration(seconds: 150);
+  static const int _commandSendInvalidState = 6000;
 
   DemoDeviceServerController({
     required this.configuration,
@@ -35,8 +40,18 @@ final class DemoDeviceServerController extends ChangeNotifier {
 
   DemoDownlinkSession? _session;
   TiRtcConnService? _service;
+  final DemoEchoCommandResponder _echoResponder = DemoEchoCommandResponder();
+  late final DemoStreamMessageSender _streamMessageSender = DemoStreamMessageSender(
+    streamId: DemoDeviceServerConfiguration.defaultVideoStreamId,
+    onSent: _handleStreamMessageSent,
+  );
   AutomationCommandProbe? _commandProbe;
   final Set<TiRtcConn> _acceptedConnections = <TiRtcConn>{};
+  final Map<TiRtcConn, int> _acceptedConnectionSessionIndexes = <TiRtcConn, int>{};
+  final Set<int> _streamMessageMarkerSessionIndexes = <int>{};
+  List<DemoCommandPanelEvent> _commandEvents = <DemoCommandPanelEvent>[];
+  int _nextAcceptedSessionIndex = 0;
+  bool _commandConnected = false;
   bool _started = false;
   bool _terminal = false;
   bool _localPreviewVisible = false;
@@ -45,10 +60,15 @@ final class DemoDeviceServerController extends ChangeNotifier {
   String? _failureMessage;
   int? _failureErrorCode;
   String? _failureNativeMessage;
+  Completer<void>? _firstLocalInputsStarted;
 
   DemoDownlinkSession? get session => _session;
 
   bool get localPreviewVisible => _localPreviewVisible;
+
+  bool get commandConnected => _commandConnected;
+
+  List<DemoCommandPanelEvent> get commandEvents => List<DemoCommandPanelEvent>.unmodifiable(_commandEvents);
 
   String get stageLabel => _stageLabel;
 
@@ -66,11 +86,33 @@ final class DemoDeviceServerController extends ChangeNotifier {
     return _session?.buildLocalPreview() ?? const SizedBox.expand();
   }
 
+  Future<int> sendCommand(int commandId, Uint8List payload) async {
+    final TiRtcConn? connection = _acceptedConnections.isEmpty ? null : _acceptedConnections.first;
+    final int code = connection?.sendCommand(commandId: commandId, data: payload) ?? _commandSendInvalidState;
+    _echoResponder.trackLocalSend(
+      commandId: commandId,
+      payload: payload,
+      resultCode: code,
+    );
+    _appendCommandEvent(
+      DemoCommandPanelEvent(
+        direction: DemoCommandEventDirection.sent,
+        commandId: commandId,
+        payload: payload,
+        resultCode: code,
+        createdAt: DateTime.now(),
+      ),
+    );
+    return code;
+  }
+
   Future<int> start() async {
     if (_started) {
       return 0;
     }
     _started = true;
+    _commandEvents = <DemoCommandPanelEvent>[];
+    _setCommandConnected(false);
     _setStage('初始化中');
 
     if (!runtimeAlreadyInitialized) {
@@ -99,18 +141,23 @@ final class DemoDeviceServerController extends ChangeNotifier {
       'device_id_present': configuration.deviceId.isNotEmpty,
     });
     _session = DemoDownlinkSession.localInputsOnly();
+    _firstLocalInputsStarted = Completer<void>();
 
     if (requestPermissions != null && !await requestPermissions!()) {
       _fail(
-        failureStage: 'local_media_permission',
-        message: 'local media permission denied',
+        failureStage: 'capture_permission',
+        message: 'camera or microphone permission denied',
       );
       return 1;
     }
 
     _setStage('准备本地采集');
+    final TiRtcAudioInputOptions audioOptions = _audioInputOptions();
     final TiRtcVideoInputOptions videoOptions = _videoInputOptions();
-    final int prepareLocalCode = await _session!.prepareLocalInputs(videoOptions: videoOptions);
+    final int prepareLocalCode = await _session!.prepareLocalInputs(
+      audioOptions: audioOptions,
+      videoOptions: videoOptions,
+    );
     if (prepareLocalCode != 0) {
       _fail(
         failureStage: 'local_input_prepare',
@@ -121,14 +168,14 @@ final class DemoDeviceServerController extends ChangeNotifier {
     }
 
     _setStage('启动本地预览');
-    final int startLocalCode = await _session!.startLocalInputs(videoOptions: videoOptions);
-    if (startLocalCode != 0) {
+    final int startVideoCode = await _session!.startLocalVideo();
+    if (startVideoCode != 0) {
       _fail(
         failureStage: 'local_input_start',
-        message: 'local input start failed',
-        errorCode: startLocalCode,
+        message: 'local video input start failed',
+        errorCode: startVideoCode,
       );
-      return startLocalCode;
+      return startVideoCode;
     }
     final int? actualWidth = _session!.localVideoSize?.width.round();
     final int? actualHeight = _session!.localVideoSize?.height.round();
@@ -141,40 +188,6 @@ final class DemoDeviceServerController extends ChangeNotifier {
       );
       return 1;
     }
-    final Map<String, Object?> localInputsStartedPayload = <String, Object?>{
-      'audio_input_started': _session!.audioInputState == TiRtcInputState.running,
-      'video_input_started': _session!.videoInputState == TiRtcInputState.running,
-      'native_capture_owner': _nativeCaptureOwner(),
-      'requested_video_codec': configuration.videoCodec.name,
-      'requested_encoder_preference': configuration.encoderPreference.name,
-      'requested_width': DemoDeviceServerConfiguration.fixedVideoWidth,
-      'requested_height': DemoDeviceServerConfiguration.fixedVideoHeight,
-      'requested_fps': DemoDeviceServerConfiguration.fixedVideoFps,
-      'actual_width': _session!.localVideoSize?.width.round(),
-      'actual_height': _session!.localVideoSize?.height.round(),
-      'actual_fps': _session!.localVideoFps,
-      'actual_encoder_backend':
-          configuration.encoderPreference == DemoDeviceEncoderPreference.hardware ? 'hardware' : 'software',
-      'fallback_applied': false,
-    };
-    markerSink?.passed('local_inputs_started', payload: localInputsStartedPayload);
-    performanceMarkerSink?.passed('perf_local_inputs_started', payload: <String, Object?>{
-      'audio_input_started': localInputsStartedPayload['audio_input_started'],
-      'video_input_started': localInputsStartedPayload['video_input_started'],
-      'native_capture_owner': localInputsStartedPayload['native_capture_owner'],
-    });
-    performanceMarkerSink?.passed('perf_encoder_backend_resolved', payload: <String, Object?>{
-      'backend_proof_source': 'android_video_input_start_result',
-      'requested_encoder_preference': configuration.encoderPreference.name,
-      'actual_encoder_backend': localInputsStartedPayload['actual_encoder_backend'],
-      'video_codec': 'h264',
-      'requested_width': DemoDeviceServerConfiguration.fixedVideoWidth,
-      'requested_height': DemoDeviceServerConfiguration.fixedVideoHeight,
-      'requested_fps': DemoDeviceServerConfiguration.fixedVideoFps,
-      'actual_config_width': localInputsStartedPayload['actual_width'],
-      'actual_config_height': localInputsStartedPayload['actual_height'],
-      'actual_config_fps': localInputsStartedPayload['actual_fps'],
-    });
     _localPreviewVisible = showLocalPreview;
     notifyListeners();
 
@@ -249,9 +262,23 @@ final class DemoDeviceServerController extends ChangeNotifier {
       'device_id_present': configuration.deviceId.isNotEmpty,
     });
 
+    final int? seconds = renderWindowSeconds;
+    if (seconds != null &&
+        !await _waitForServerStage(
+          _firstLocalInputsStarted!.future,
+          serviceFailure.future,
+          failureStage: 'service_connected',
+          timeout: _serviceConnectTimeout,
+          timeoutMessage: '等待远端连接并启动本地采集超时。',
+        )) {
+      return 1;
+    }
+    if (_terminal) {
+      return 1;
+    }
+
     _setStage('运行中');
 
-    final int? seconds = renderWindowSeconds;
     if (seconds == null) {
       return 0;
     }
@@ -337,13 +364,7 @@ final class DemoDeviceServerController extends ChangeNotifier {
       await WidgetsBinding.instance.endOfFrame;
     }
     TiRtcLogging.i('flutter_example', 'server_release_stop_inputs_start reason=$reason');
-    if (performanceMarkerSink != null || markerSink != null) {
-      await _session?.stopAndDetachLocalInputs();
-    } else if (Platform.isAndroid) {
-      await _session?.detachAndStopLocalInputs();
-    } else {
-      await _session?.detachAndStopLocalInputs();
-    }
+    await _session?.detachAndStopLocalInputs();
     TiRtcLogging.i('flutter_example', 'server_release_stop_inputs_done reason=$reason');
     _releaseAcceptedConnections(reason: reason);
     TiRtcLogging.i('flutter_example', 'server_release_connection_released reason=$reason');
@@ -399,6 +420,10 @@ final class DemoDeviceServerController extends ChangeNotifier {
       message: message,
       errorCode: errorCode,
     );
+    final Completer<void>? firstLocalInputsStarted = _firstLocalInputsStarted;
+    if (firstLocalInputsStarted != null) {
+      _complete(firstLocalInputsStarted);
+    }
     performanceMarkerSink?.failure(
       errorStage: _performanceFailureStage(failureStage),
       errorCode: _performanceFailureCode(failureStage),
@@ -459,6 +484,9 @@ final class DemoDeviceServerController extends ChangeNotifier {
     }
 
     _acceptedConnections.add(connection);
+    _nextAcceptedSessionIndex += 1;
+    final int sessionIndex = _nextAcceptedSessionIndex;
+    _acceptedConnectionSessionIndexes[connection] = sessionIndex;
     connection.onStateChanged = (TiRtcConnState state, int errorCode) {
       TiRtcLogging.i(
         'flutter_example',
@@ -468,22 +496,18 @@ final class DemoDeviceServerController extends ChangeNotifier {
         unawaited(_handleAcceptedConnectionDisconnected(session, connection, errorCode));
       }
     };
-    connection.onCommand = _handleCommand;
+    connection.onCommand = (int commandId, Uint8List payload) {
+      _handleCommand(connection, commandId, payload);
+    };
     markerSink?.passed('service_connected', payload: <String, Object?>{
       'conn_handle_present': true,
+      'session_index': sessionIndex,
       'active_connections': _acceptedConnections.length,
     });
     performanceMarkerSink?.passed('perf_service_connected', payload: <String, Object?>{
       'conn_handle_present': true,
       'active_connections': _acceptedConnections.length,
     });
-
-    if (markerSink != null && !await _runCommandProbe(connection)) {
-      return;
-    }
-    if (_terminal || !identical(_session, session) || !_acceptedConnections.contains(connection)) {
-      return;
-    }
 
     final int attachLocalCode = await session.attachLocalInputsToConnection(
       connection,
@@ -492,6 +516,7 @@ final class DemoDeviceServerController extends ChangeNotifier {
     );
     if (attachLocalCode != 0) {
       _acceptedConnections.remove(connection);
+      _acceptedConnectionSessionIndexes.remove(connection);
       connection.dispose();
       _fail(
         failureStage: 'local_input_attach',
@@ -503,6 +528,7 @@ final class DemoDeviceServerController extends ChangeNotifier {
     markerSink?.passed('local_inputs_attached', payload: <String, Object?>{
       'audio_stream_id': DemoDeviceServerConfiguration.defaultAudioStreamId,
       'video_stream_id': DemoDeviceServerConfiguration.defaultVideoStreamId,
+      'session_index': sessionIndex,
       'active_connections': _acceptedConnections.length,
     });
     TiRtcLogging.i(
@@ -516,6 +542,71 @@ final class DemoDeviceServerController extends ChangeNotifier {
       'video_stream_id': DemoDeviceServerConfiguration.defaultVideoStreamId,
       'active_connections': _acceptedConnections.length,
     });
+
+    final int startAudioCode = await session.startLocalAudio();
+    if (startAudioCode != 0) {
+      _acceptedConnections.remove(connection);
+      _acceptedConnectionSessionIndexes.remove(connection);
+      await session.detachLocalInputsFromConnection(connection);
+      connection.dispose();
+      _fail(
+        failureStage: 'local_input_start',
+        message: 'local audio input start failed',
+        errorCode: startAudioCode,
+      );
+      return;
+    }
+
+    final Map<String, Object?> localInputsStartedPayload = <String, Object?>{
+      'audio_input_started': session.audioInputState == TiRtcInputState.running,
+      'video_input_started': session.videoInputState == TiRtcInputState.running,
+      'native_capture_owner': _nativeCaptureOwner(),
+      'requested_audio_codec': configuration.audioCodec.name,
+      'requested_audio_sample_rate_hz': configuration.audioSampleRate.hertz,
+      'requested_audio_channels': configuration.audioChannels.count,
+      'requested_video_codec': configuration.videoCodec.name,
+      'requested_encoder_preference': configuration.encoderPreference.name,
+      'requested_width': DemoDeviceServerConfiguration.fixedVideoWidth,
+      'requested_height': DemoDeviceServerConfiguration.fixedVideoHeight,
+      'requested_fps': DemoDeviceServerConfiguration.fixedVideoFps,
+      'actual_width': session.localVideoSize?.width.round(),
+      'actual_height': session.localVideoSize?.height.round(),
+      'actual_fps': session.localVideoFps,
+      'actual_encoder_backend':
+          configuration.encoderPreference == DemoDeviceEncoderPreference.hardware ? 'hardware' : 'software',
+      'fallback_applied': false,
+    };
+    markerSink?.passed('local_inputs_started', payload: localInputsStartedPayload);
+    performanceMarkerSink?.passed('perf_local_inputs_started', payload: <String, Object?>{
+      'audio_input_started': localInputsStartedPayload['audio_input_started'],
+      'video_input_started': localInputsStartedPayload['video_input_started'],
+      'native_capture_owner': localInputsStartedPayload['native_capture_owner'],
+    });
+    performanceMarkerSink?.passed('perf_encoder_backend_resolved', payload: <String, Object?>{
+      'backend_proof_source': 'android_video_input_start_result',
+      'requested_encoder_preference': configuration.encoderPreference.name,
+      'actual_encoder_backend': localInputsStartedPayload['actual_encoder_backend'],
+      'video_codec': 'h264',
+      'requested_width': DemoDeviceServerConfiguration.fixedVideoWidth,
+      'requested_height': DemoDeviceServerConfiguration.fixedVideoHeight,
+      'requested_fps': DemoDeviceServerConfiguration.fixedVideoFps,
+      'actual_config_width': localInputsStartedPayload['actual_width'],
+      'actual_config_height': localInputsStartedPayload['actual_height'],
+      'actual_config_fps': localInputsStartedPayload['actual_fps'],
+    });
+    final Completer<void>? firstLocalInputsStarted = _firstLocalInputsStarted;
+    if (firstLocalInputsStarted != null) {
+      _complete(firstLocalInputsStarted);
+    }
+    _setCommandConnected(true);
+
+    if (markerSink != null && !await _runCommandProbe(connection)) {
+      return;
+    }
+    if (_terminal || !identical(_session, session) || !_acceptedConnections.contains(connection)) {
+      return;
+    }
+    _streamMessageSender.start(connection, sessionIndex: sessionIndex);
   }
 
   Future<void> _handleAcceptedConnectionDisconnected(
@@ -531,10 +622,36 @@ final class DemoDeviceServerController extends ChangeNotifier {
       'server_connection_disconnected errorCode=$errorCode active_before=${_acceptedConnections.length}',
     );
     _acceptedConnections.remove(connection);
+    final int? sessionIndex = _acceptedConnectionSessionIndexes.remove(connection);
+    if (sessionIndex != null) {
+      _streamMessageMarkerSessionIndexes.remove(sessionIndex);
+    }
+    _setCommandConnected(_acceptedConnections.isNotEmpty);
+    _streamMessageSender.stop(connection);
+    await session.stopLocalAudio();
     await session.detachLocalInputsFromConnection(connection);
     connection.onStateChanged = null;
     connection.onCommand = null;
     connection.dispose();
+  }
+
+  void _handleStreamMessageSent(DemoStreamMessageSendEvent event) {
+    if (event.resultCode != 0 ||
+        !event.periodicSendOk ||
+        _streamMessageMarkerSessionIndexes.contains(event.sessionIndex)) {
+      return;
+    }
+    _streamMessageMarkerSessionIndexes.add(event.sessionIndex);
+    markerSink?.passed('stream_message_sent', payload: <String, Object?>{
+      'session_index': event.sessionIndex,
+      'stream_id': event.streamId,
+      'payload_epoch_seconds': event.epochSeconds,
+      'payload_bytes': event.payloadBytes,
+      'payload_hash': event.payloadHash,
+      'result_code': event.resultCode,
+      'sent_count': event.sentCount,
+      'periodic_send_ok': event.periodicSendOk,
+    });
   }
 
   Future<bool> _runCommandProbe(TiRtcConn connection) async {
@@ -545,7 +662,7 @@ final class DemoDeviceServerController extends ChangeNotifier {
         required int commandId,
         required Uint8List payload,
       }) =>
-          connection.sendCommand(commandId: commandId, data: payload),
+          _sendProbeCommand(connection, commandId, payload),
     );
     if (identical(_commandProbe, probe)) {
       _commandProbe = null;
@@ -566,13 +683,64 @@ final class DemoDeviceServerController extends ChangeNotifier {
     return true;
   }
 
-  void _handleCommand(int commandId, Uint8List payload) {
+  int _sendProbeCommand(TiRtcConn connection, int commandId, Uint8List payload) {
+    final int code = connection.sendCommand(commandId: commandId, data: payload);
+    _echoResponder.trackLocalSend(
+      commandId: commandId,
+      payload: payload,
+      resultCode: code,
+    );
+    return code;
+  }
+
+  void _handleCommand(TiRtcConn connection, int commandId, Uint8List payload) {
+    _appendCommandEvent(
+      DemoCommandPanelEvent(
+        direction: DemoCommandEventDirection.received,
+        commandId: commandId,
+        payload: payload,
+        createdAt: DateTime.now(),
+      ),
+    );
     _commandProbe?.handleCommand(commandId, payload);
+    final int? echoCode = _echoResponder.handleReceived(
+      commandId: commandId,
+      payload: payload,
+      sendCommand: (int commandId, Uint8List payload) => connection.sendCommand(commandId: commandId, data: payload),
+    );
+    if (echoCode != null) {
+      _appendCommandEvent(
+        DemoCommandPanelEvent(
+          direction: DemoCommandEventDirection.sent,
+          commandId: commandId,
+          payload: payload,
+          resultCode: echoCode,
+          createdAt: DateTime.now(),
+        ),
+      );
+    }
+  }
+
+  void _appendCommandEvent(DemoCommandPanelEvent event) {
+    _commandEvents = trimDemoCommandEvents(<DemoCommandPanelEvent>[..._commandEvents, event]);
+    notifyListeners();
+  }
+
+  void _setCommandConnected(bool connected) {
+    if (_commandConnected == connected) {
+      return;
+    }
+    _commandConnected = connected;
+    notifyListeners();
   }
 
   void _releaseAcceptedConnections({required String reason}) {
     final List<TiRtcConn> connections = List<TiRtcConn>.of(_acceptedConnections);
     _acceptedConnections.clear();
+    _acceptedConnectionSessionIndexes.clear();
+    _streamMessageMarkerSessionIndexes.clear();
+    _setCommandConnected(false);
+    _streamMessageSender.stopAll();
     for (final TiRtcConn connection in connections) {
       connection.onStateChanged = null;
       connection.onCommand = null;
@@ -612,6 +780,23 @@ final class DemoDeviceServerController extends ChangeNotifier {
     );
   }
 
+  TiRtcAudioInputOptions _audioInputOptions() {
+    return TiRtcAudioInputOptions(
+      codec: switch (configuration.audioCodec) {
+        DemoDeviceAudioCodec.g711a => TiRtcAudioCodec.g711a,
+        DemoDeviceAudioCodec.aac => TiRtcAudioCodec.aac,
+        DemoDeviceAudioCodec.pcm => TiRtcAudioCodec.pcm,
+      },
+      sampleRate: switch (configuration.audioSampleRate) {
+        DemoDeviceAudioSampleRate.rate8k => TiRtcAudioSampleRate.rate8k,
+        DemoDeviceAudioSampleRate.rate16k => TiRtcAudioSampleRate.rate16k,
+      },
+      channels: switch (configuration.audioChannels) {
+        DemoDeviceAudioChannelCount.mono => TiRtcAudioChannelCount.mono,
+      },
+    );
+  }
+
   Future<int> _shutdownRuntimeAfterDisposal() async {
     int code = TiRtc.shutdown();
     for (int attempt = 0; attempt < 10 && code == 1007; attempt += 1) {
@@ -622,7 +807,13 @@ final class DemoDeviceServerController extends ChangeNotifier {
   }
 
   String _nativeCaptureOwner() {
-    return Platform.isAndroid ? 'android_sdk' : 'darwin_sdk';
+    if (Platform.isAndroid) {
+      return 'android_sdk';
+    }
+    if (Platform.operatingSystem == 'ohos') {
+      return 'runtime_ohos';
+    }
+    return 'darwin_sdk';
   }
 
   bool _positiveInt(int? value) {
@@ -667,7 +858,7 @@ final class DemoDeviceServerController extends ChangeNotifier {
 
   String _performanceFailureCode(String failureStage) {
     return switch (failureStage) {
-      'local_media_permission' => 'permission_denied',
+      'capture_permission' => 'permission_denied',
       'service_start' || 'service_connected' || 'service_runtime' => 'counterpart_timeout',
       'local_input_prepare' || 'local_input_start' => 'backend_unavailable',
       'render_window' => 'marker_timeout',

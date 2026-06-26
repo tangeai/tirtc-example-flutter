@@ -11,7 +11,7 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
-    private var pendingLocalMediaPermissionResult: MethodChannel.Result? = null
+    private var pendingPermissionResult: MethodChannel.Result? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -33,8 +33,10 @@ class MainActivity : FlutterActivity() {
             PERMISSIONS_CHANNEL_NAME,
         ).setMethodCallHandler { call, result ->
             when (call.method) {
-                "checkLocalMediaPermissions" -> result.success(localMediaPermissionsGranted())
-                "requestLocalMediaPermissions" -> requestLocalMediaPermissions(result)
+                "checkCameraPermission" -> result.success(permissionGranted(Manifest.permission.CAMERA))
+                "requestCameraPermission" -> requestPermission(Manifest.permission.CAMERA, result)
+                "checkMicrophonePermission" -> result.success(permissionGranted(Manifest.permission.RECORD_AUDIO))
+                "requestMicrophonePermission" -> requestPermission(Manifest.permission.RECORD_AUDIO, result)
                 "requestLocalNetworkPermission" -> result.success(true)
                 else -> result.notImplemented()
             }
@@ -108,37 +110,28 @@ class MainActivity : FlutterActivity() {
         result.success(preferences.getString(key, defaultValue) ?: defaultValue)
     }
 
-    private fun requestLocalMediaPermissions(result: MethodChannel.Result) {
+    private fun requestPermission(permission: String, result: MethodChannel.Result) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
             result.success(true)
             return
         }
-        if (pendingLocalMediaPermissionResult != null) {
-            result.error("PERMISSION_REQUEST_IN_PROGRESS", "local media permission request already in progress", null)
+        if (pendingPermissionResult != null) {
+            result.error("PERMISSION_REQUEST_IN_PROGRESS", "permission request already in progress", null)
             return
         }
 
-        val missingPermissions = missingLocalMediaPermissions()
-        if (missingPermissions.isEmpty()) {
+        if (permissionGranted(permission)) {
             result.success(true)
             return
         }
 
-        pendingLocalMediaPermissionResult = result
-        requestPermissions(missingPermissions.toTypedArray(), LOCAL_MEDIA_PERMISSION_REQUEST_CODE)
+        pendingPermissionResult = result
+        requestPermissions(arrayOf(permission), CAPTURE_PERMISSION_REQUEST_CODE)
     }
 
-    private fun localMediaPermissionsGranted(): Boolean {
-        return Build.VERSION.SDK_INT < Build.VERSION_CODES.M || missingLocalMediaPermissions().isEmpty()
-    }
-
-    private fun missingLocalMediaPermissions(): List<String> {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
-            return emptyList()
-        }
-        return LOCAL_MEDIA_PERMISSIONS.filter { permission ->
-            checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED
-        }
+    private fun permissionGranted(permission: String): Boolean {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+            checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
     }
 
     private fun initialPerformanceLaunchConfig(): Map<String, Any?>? {
@@ -172,9 +165,9 @@ class MainActivity : FlutterActivity() {
         permissions: Array<out String>,
         grantResults: IntArray,
     ) {
-        if (requestCode == LOCAL_MEDIA_PERMISSION_REQUEST_CODE) {
-            val result = pendingLocalMediaPermissionResult
-            pendingLocalMediaPermissionResult = null
+        if (requestCode == CAPTURE_PERMISSION_REQUEST_CODE) {
+            val result = pendingPermissionResult
+            pendingPermissionResult = null
             result?.success(
                 grantResults.isNotEmpty() &&
                     grantResults.all { it == PackageManager.PERMISSION_GRANTED },
@@ -190,8 +183,6 @@ class MainActivity : FlutterActivity() {
         private const val PERFORMANCE_CHANNEL_NAME = "tirtc_av_kit_example/performance"
         private const val PERFORMANCE_EXTRA_PREFIX = "tirtc_perf_"
         private const val PREFERENCES_FILE_NAME = "tirtc_av_kit_example_preferences"
-        private const val LOCAL_MEDIA_PERMISSION_REQUEST_CODE = 7610
-        private val LOCAL_MEDIA_PERMISSIONS =
-            arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
+        private const val CAPTURE_PERMISSION_REQUEST_CODE = 7610
     }
 }

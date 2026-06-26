@@ -5,7 +5,7 @@ import 'package:flutter/widgets.dart';
 import 'package:tirtc_av_kit/tirtc_av_kit.dart';
 
 import 'demo_call_command.dart';
-import 'widgets/downlink_metrics_overlay.dart';
+import 'widgets/downlink_metrics_overlay_model.dart';
 
 const int _tiRtcErrorInvalidArgument = 6000;
 
@@ -65,11 +65,13 @@ final class DemoDownlinkSession {
     TiRtcOnInputStateChanged? onVideoInputStateChanged,
     TiRtcOnVideoInputActualConfigChanged? onVideoInputActualConfigChanged,
     TiRtcOnInputError? onVideoInputError,
+    TiRtcOnConnStreamMessage? onStreamMessage,
   }) {
     final TiRtcConn? connection = _connection;
     if (connection != null) {
       connection.onStateChanged = onConnectionStateChanged;
       connection.onCommand = onCommand;
+      connection.onStreamMessage = onStreamMessage;
     }
     _audioOutput?.onStateChanged = onAudioStateChanged;
     _audioOutput?.onError = onAudioError;
@@ -88,6 +90,7 @@ final class DemoDownlinkSession {
     if (connection != null) {
       connection.onStateChanged = null;
       connection.onCommand = null;
+      connection.onStreamMessage = null;
     }
     _audioOutput?.onStateChanged = null;
     _audioOutput?.onError = null;
@@ -124,13 +127,29 @@ final class DemoDownlinkSession {
     return audioOutput.attach(connection: connection, streamId: streamId);
   }
 
-  int setVideoOptions({required int decoderPreference}) {
+  int setAudioOptions({required TiRtcOutputBufferStrategy bufferStrategy}) {
+    final TiRtcAudioOutput? audioOutput = _audioOutput;
+    if (audioOutput == null) {
+      return _tiRtcErrorInvalidArgument;
+    }
+    return audioOutput.configure(
+      TiRtcAudioOutputOptions(bufferStrategy: bufferStrategy),
+    );
+  }
+
+  int setVideoOptions({
+    required int decoderPreference,
+    required TiRtcOutputBufferStrategy bufferStrategy,
+  }) {
     final TiRtcVideoOutput? videoOutput = _videoOutput;
     if (videoOutput == null) {
       return _tiRtcErrorInvalidArgument;
     }
     return videoOutput.setOptions(
-      TiRtcVideoOutputOptions(decoderPreference: decoderPreference),
+      TiRtcVideoOutputOptions(
+        decoderPreference: decoderPreference,
+        bufferStrategy: bufferStrategy,
+      ),
     );
   }
 
@@ -171,6 +190,18 @@ final class DemoDownlinkSession {
     return connection.sendCommand(commandId: commandId, data: payload);
   }
 
+  int sendStreamMessage({
+    required int streamId,
+    required Uint8List payload,
+    int timestampMs = 0,
+  }) {
+    final TiRtcConn? connection = _connection;
+    if (connection == null) {
+      return _tiRtcErrorInvalidArgument;
+    }
+    return connection.sendStreamMessage(streamId: streamId, timestampMs: timestampMs, data: payload);
+  }
+
   Future<int> prepareLocalInputs({
     TiRtcAudioInputOptions audioOptions = const TiRtcAudioInputOptions(),
     TiRtcVideoInputOptions videoOptions = const TiRtcVideoInputOptions(),
@@ -184,6 +215,36 @@ final class DemoDownlinkSession {
       return code;
     }
     return 0;
+  }
+
+  Future<int> prepareLocalAudio({
+    TiRtcAudioInputOptions audioOptions = const TiRtcAudioInputOptions(),
+  }) {
+    return _audioInput.setOptions(audioOptions);
+  }
+
+  Future<int> attachLocalAudio({required int streamId}) async {
+    final TiRtcConn? connection = _connection;
+    if (connection == null) {
+      return _tiRtcErrorInvalidArgument;
+    }
+    final int code = await _audioInput.attach(connection: connection, streamId: streamId);
+    if (code == 0) {
+      _localAudioConnections.add(connection);
+    }
+    return code;
+  }
+
+  Future<int> startLocalAudio() {
+    return _audioInput.start();
+  }
+
+  Future<int> stopLocalAudio() {
+    return _audioInput.stop();
+  }
+
+  Future<int> startLocalVideo() {
+    return _videoInput.start();
   }
 
   Future<int> startLocalInputs({
@@ -245,15 +306,19 @@ final class DemoDownlinkSession {
   }
 
   Future<void> detachAndStopLocalInputs() async {
-    await detachLocalInputsFromAllConnections();
-    await _videoInput.stop();
-    await _audioInput.stop();
+    await stopAndDetachLocalInputs();
   }
 
   Future<void> stopAndDetachLocalInputs() async {
-    await _videoInput.stop();
-    await _audioInput.stop();
+    TiRtcLogging.i('flutter_example', 'local_video_input_stop_start');
+    final int videoStopCode = await _videoInput.stop();
+    TiRtcLogging.i('flutter_example', 'local_video_input_stop_done code=$videoStopCode');
+    TiRtcLogging.i('flutter_example', 'local_audio_input_stop_start');
+    final int audioStopCode = await _audioInput.stop();
+    TiRtcLogging.i('flutter_example', 'local_audio_input_stop_done code=$audioStopCode');
+    TiRtcLogging.i('flutter_example', 'local_inputs_detach_all_start');
     await detachLocalInputsFromAllConnections();
+    TiRtcLogging.i('flutter_example', 'local_inputs_detach_all_done');
   }
 
   TiRtcAudioOutputState get audioState => _audioOutput?.state ?? TiRtcAudioOutputState.idle;
@@ -276,6 +341,23 @@ final class DemoDownlinkSession {
     _audioOutput?.detach();
   }
 
+  int resetOutputMetricsSession() {
+    final TiRtcAudioOutput? audioOutput = _audioOutput;
+    final TiRtcVideoOutput? videoOutput = _videoOutput;
+    if (audioOutput == null || videoOutput == null) {
+      return _tiRtcErrorInvalidArgument;
+    }
+    int code = audioOutput.resetMetricsSession();
+    if (code != 0) {
+      return code;
+    }
+    code = videoOutput.resetMetricsSession();
+    if (code != 0) {
+      return code;
+    }
+    return 0;
+  }
+
   void disconnectConnection() {
     _connection?.disconnect();
   }
@@ -284,6 +366,13 @@ final class DemoDownlinkSession {
     final TiRtcConn? connection = _connection;
     if (connection != null) {
       await detachLocalInputsFromConnection(connection);
+    }
+  }
+
+  Future<void> detachLocalAudioFromBoundConnection() async {
+    final TiRtcConn? connection = _connection;
+    if (connection != null && _localAudioConnections.remove(connection)) {
+      await _audioInput.detach(connection: connection);
     }
   }
 
@@ -322,11 +411,11 @@ final class DemoDownlinkSession {
     _connection = null;
   }
 
-  void disconnect({required String reason}) {
-    TiRtcLogging.i('flutter_example', 'downlink_stop_requested reason=$reason');
-    unawaited(detachAndStopLocalInputs());
+  Future<void> release({required String reason}) async {
+    TiRtcLogging.i('flutter_example', 'downlink_release_requested reason=$reason');
     _videoOutput?.detach();
     _audioOutput?.detach();
+    await detachAndStopLocalInputs();
     _connection?.disconnect();
   }
 
@@ -367,23 +456,62 @@ final class DemoDownlinkSession {
       connectDurationMs: connSnapshot.connectDurationMs,
       firstFrameDurationMs: videoSnapshot.startup.firstFrameDurationMs,
       sessionStutterRatio: videoSnapshot.stutter.sessionStutterRatio,
+      sessionStutterTotalMs: videoSnapshot.stutter.sessionStutterTotalMs,
       sessionStutterCount: videoSnapshot.stutter.sessionStutterCount,
       sessionStutterPeakMs: videoSnapshot.stutter.sessionStutterPeakMs,
       videoWidth: videoDebugSnapshot?.width,
       videoHeight: videoDebugSnapshot?.height,
       videoCodec: videoDebugSnapshot?.codec,
       audioCodec: audioDebugSnapshot?.codec,
+      audioSampleRate: audioDebugSnapshot?.sampleRate,
+      audioChannels: audioDebugSnapshot?.channels,
       requestedDecoderPreference: requestedDecoderPreference,
       resolvedDecoderBackend: videoDebugSnapshot?.resolvedDecoderBackend,
       audioInputBitrateKbps: audioSnapshot.inputBitrateKbps,
       audioInputPacketRate: audioSnapshot.inputPacketRate,
       audioRenderCallbackRate: audioSnapshot.renderCallbackRate,
+      audioRecentStutterRatio: audioSnapshot.stutter.recentWindowStutterRatio,
+      audioRecentStutterCount: audioSnapshot.stutter.recentWindowStutterCount,
+      audioRecentStutterTotalMs: audioSnapshot.stutter.recentWindowStutterTotalMs,
+      audioRecentStutterPeakMs: audioSnapshot.stutter.recentWindowStutterPeakMs,
       audioRateWindowDurationMs: audioSnapshot.rateWindowDurationMs,
+      audioLatencyWindowDurationMs: audioSnapshot.localLatency.windowDurationMs,
+      audioLatencyTotalAverageMs: audioSnapshot.localLatency.total.averageMs,
+      audioLatencyBufferAverageMs: audioSnapshot.localLatency.buffer.averageMs,
+      audioLatencyDecodeReadyAverageMs: audioSnapshot.localLatency.decodeOrReady.averageMs,
+      audioLatencyOutputAverageMs: audioSnapshot.localLatency.output.averageMs,
+      audioLatencyTotalSampleCount: audioSnapshot.localLatency.total.sampleCount,
+      audioLatencyBufferSampleCount: audioSnapshot.localLatency.buffer.sampleCount,
+      audioLatencyDecodeReadySampleCount: audioSnapshot.localLatency.decodeOrReady.sampleCount,
+      audioLatencyOutputSampleCount: audioSnapshot.localLatency.output.sampleCount,
+      audioLatencyTotalUnavailableCount: audioSnapshot.localLatency.total.unavailableCount,
+      audioLatencySessionDurationMs: audioSnapshot.localLatency.sessionDurationMs,
+      audioLatencySessionTotalAverageMs: audioSnapshot.localLatency.sessionTotal.averageMs,
+      audioLatencySessionTotalMinMs: audioSnapshot.localLatency.sessionTotal.minMs,
+      audioLatencySessionTotalPeakMs: audioSnapshot.localLatency.sessionTotal.peakMs,
+      audioLatencySessionTotalSampleCount: audioSnapshot.localLatency.sessionTotal.sampleCount,
+      audioLatencySessionTotalUnavailableCount: audioSnapshot.localLatency.sessionTotal.unavailableCount,
       videoInputBitrateKbps: videoSnapshot.inputBitrateKbps,
       videoInputFps: videoSnapshot.inputFps,
       videoDecodedFps: videoSnapshot.decodedFps,
       videoRenderFps: videoSnapshot.renderFps,
       videoRateWindowDurationMs: videoSnapshot.rateWindowDurationMs,
+      videoLatencyWindowDurationMs: videoSnapshot.localLatency.windowDurationMs,
+      videoLatencyTotalAverageMs: videoSnapshot.localLatency.total.averageMs,
+      videoLatencyBufferAverageMs: videoSnapshot.localLatency.buffer.averageMs,
+      videoLatencyDecodeReadyAverageMs: videoSnapshot.localLatency.decodeOrReady.averageMs,
+      videoLatencyOutputAverageMs: videoSnapshot.localLatency.output.averageMs,
+      videoLatencyTotalSampleCount: videoSnapshot.localLatency.total.sampleCount,
+      videoLatencyBufferSampleCount: videoSnapshot.localLatency.buffer.sampleCount,
+      videoLatencyDecodeReadySampleCount: videoSnapshot.localLatency.decodeOrReady.sampleCount,
+      videoLatencyOutputSampleCount: videoSnapshot.localLatency.output.sampleCount,
+      videoLatencyTotalUnavailableCount: videoSnapshot.localLatency.total.unavailableCount,
+      videoLatencySessionDurationMs: videoSnapshot.localLatency.sessionDurationMs,
+      videoLatencySessionTotalAverageMs: videoSnapshot.localLatency.sessionTotal.averageMs,
+      videoLatencySessionTotalMinMs: videoSnapshot.localLatency.sessionTotal.minMs,
+      videoLatencySessionTotalPeakMs: videoSnapshot.localLatency.sessionTotal.peakMs,
+      videoLatencySessionTotalSampleCount: videoSnapshot.localLatency.sessionTotal.sampleCount,
+      videoLatencySessionTotalUnavailableCount: videoSnapshot.localLatency.sessionTotal.unavailableCount,
     );
   }
 
@@ -404,6 +532,7 @@ final class DemoDownlinkSession {
       return;
     }
     _disposed = true;
+    await release(reason: 'session_dispose');
     await _videoInput.dispose();
     await _audioInput.dispose();
     _videoOutput?.dispose();

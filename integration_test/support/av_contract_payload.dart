@@ -54,6 +54,7 @@ final class AutomationPayload {
   const AutomationPayload({
     required this.runId,
     required this.scenario,
+    required this.pairingId,
     required this.bootstrapId,
     required this.appId,
     required this.endpoint,
@@ -65,15 +66,21 @@ final class AutomationPayload {
     required this.audioStreamId,
     required this.videoStreamId,
     required this.codec,
+    required this.audioCodec,
+    required this.audioSampleRateHz,
+    required this.audioChannels,
     required this.encoderPreference,
     required this.videoDecoderPreference,
+    required this.bufferPolicy,
     required this.renderWindowSeconds,
+    required this.metricsSessionResetAfterSeconds,
     required this.autoUploadLogs,
     required this.consoleLogEnabled,
   });
 
   final String runId;
   final String scenario;
+  final String pairingId;
   final String bootstrapId;
   final String appId;
   final String? endpoint;
@@ -85,9 +92,14 @@ final class AutomationPayload {
   final int audioStreamId;
   final int videoStreamId;
   final String codec;
+  final String audioCodec;
+  final int audioSampleRateHz;
+  final int audioChannels;
   final String encoderPreference;
   final int videoDecoderPreference;
+  final String bufferPolicy;
   final int renderWindowSeconds;
+  final int? metricsSessionResetAfterSeconds;
   final bool autoUploadLogs;
   final bool consoleLogEnabled;
 
@@ -130,6 +142,7 @@ final class AutomationPayload {
         scenario: decoded.containsKey('scenario')
             ? decoded['scenario']! as String
             : AutomationPayload.scenarioCliDeviceToFlutterClient,
+        pairingId: decoded.containsKey('pairing_id') ? decoded['pairing_id']! as String : runIdAuthority,
         bootstrapId: decoded['bootstrap_id']! as String,
         appId: decoded.containsKey('app_id') ? decoded['app_id']! as String : '',
         endpoint: decoded['endpoint'] as String?,
@@ -141,13 +154,20 @@ final class AutomationPayload {
         audioStreamId: decoded['audio_stream_id']! as int,
         videoStreamId: decoded['video_stream_id']! as int,
         codec: decoded['codec']! as String,
+        audioCodec: decoded['audio_codec']! as String,
+        audioSampleRateHz: decoded['audio_sample_rate_hz']! as int,
+        audioChannels: decoded['audio_channels']! as int,
         encoderPreference: decoded.containsKey('encoder_preference')
             ? decoded['encoder_preference']! as String
             : DemoDeviceEncoderPreference.hardware.name,
         videoDecoderPreference: decoded.containsKey('video_decoder_preference')
             ? decoded['video_decoder_preference']! as int
             : DemoExampleSettings.videoDecoderPreferenceAuto,
+        bufferPolicy: decoded.containsKey('buffer_policy')
+            ? decoded['buffer_policy']! as String
+            : DemoExampleSettings.outputBufferPolicyAutomatic,
         renderWindowSeconds: decoded['render_window_seconds']! as int,
+        metricsSessionResetAfterSeconds: decoded['metrics_session_reset_after_seconds'] as int?,
         autoUploadLogs: decoded['auto_upload_logs']! as bool,
         consoleLogEnabled: decoded.containsKey('console_log_enabled') ? decoded['console_log_enabled']! as bool : true,
       ),
@@ -157,6 +177,7 @@ final class AutomationPayload {
   Map<String, Object?> markerPayload() {
     return <String, Object?>{
       'scenario': scenario,
+      'pairing_id': pairingId,
       'bootstrap_id': bootstrapId,
       'app_id_present': appId.isNotEmpty,
       'endpoint': endpoint,
@@ -166,9 +187,15 @@ final class AutomationPayload {
       'audio_stream_id': audioStreamId,
       'video_stream_id': videoStreamId,
       'codec': codec,
+      'audio_codec': audioCodec,
+      'audio_sample_rate_hz': audioSampleRateHz,
+      'audio_channels': audioChannels,
       if (scenario == scenarioFlutterDeviceServerToCliClient) ...<String, Object?>{
         'page_role': 'device_server',
         'page_lifecycle': 'manual_page',
+        'requested_audio_codec': audioCodec,
+        'requested_audio_sample_rate_hz': audioSampleRateHz,
+        'requested_audio_channels': audioChannels,
         'requested_video_codec': codec,
         'requested_encoder_preference': encoderPreference,
         'requested_width': DemoDeviceServerConfiguration.fixedVideoWidth,
@@ -176,7 +203,12 @@ final class AutomationPayload {
         'requested_fps': DemoDeviceServerConfiguration.fixedVideoFps,
       },
       'video_decoder_preference': videoDecoderPreference,
+      'buffer_policy': bufferPolicy,
+      'requested_output_buffer_policy': bufferPolicy,
+      'requested_output_buffer_max_watermark_ms': null,
       'render_window_seconds': renderWindowSeconds,
+      if (metricsSessionResetAfterSeconds != null)
+        'metrics_session_reset_after_seconds': metricsSessionResetAfterSeconds,
       'auto_upload_logs': autoUploadLogs,
       'console_log_enabled': consoleLogEnabled,
     };
@@ -199,6 +231,9 @@ final class AutomationPayload {
     }
     final String? bootstrapId = _requiredString(payload, 'bootstrap_id');
     final String? codec = _requiredString(payload, 'codec');
+    if (payload.containsKey('pairing_id') && _requiredString(payload, 'pairing_id') != null) {
+      return 'pairing_id is required';
+    }
     if (bootstrapId != null || codec != null) {
       return bootstrapId ?? codec;
     }
@@ -223,11 +258,26 @@ final class AutomationPayload {
           payload.containsKey('height') ||
           payload.containsKey('frame_rate') ||
           payload.containsKey('bitrate_kbps')) {
-        return 'local media dimensions are fixed';
+        return 'capture dimensions are fixed';
       }
     }
     if (payload['codec'] is! String) {
       return 'codec must be a string';
+    }
+    if (payload['audio_codec'] is! String) {
+      return 'audio_codec must be a string';
+    }
+    final DemoDeviceAudioCodec? audioCodec = DemoDeviceAudioCodec.tryParse(payload['audio_codec']! as String);
+    if (audioCodec == null) {
+      return 'audio_codec must be pcm, g711a, aac, opus, or amr';
+    }
+    if (payload['audio_sample_rate_hz'] is! int ||
+        DemoDeviceAudioSampleRate.tryParseHertz(payload['audio_sample_rate_hz']! as int) == null) {
+      return 'audio_sample_rate_hz must be 8000 or 16000';
+    }
+    if (payload['audio_channels'] is! int ||
+        DemoDeviceAudioChannelCount.tryParseCount(payload['audio_channels']! as int) == null) {
+      return 'audio_channels must be 1 or 2';
     }
     final String codecValue = payload['codec']! as String;
     if (scenario == AutomationPayload.scenarioFlutterDeviceServerToCliClient) {
@@ -259,8 +309,23 @@ final class AutomationPayload {
         return 'video_decoder_preference must be 0, 1, or 2';
       }
     }
-    if (payload['render_window_seconds'] != expectedRenderWindowSeconds) {
-      return 'render_window_seconds must be $expectedRenderWindowSeconds';
+    if (payload.containsKey('buffer_policy')) {
+      final Object? bufferPolicy = payload['buffer_policy'];
+      if (bufferPolicy is! String || !DemoExampleSettings.isValidOutputBufferPolicy(bufferPolicy)) {
+        return 'buffer_policy must be automatic or no_buffer';
+      }
+    }
+    if (payload['render_window_seconds'] is! int || (payload['render_window_seconds']! as int) <= 0) {
+      return 'render_window_seconds must be positive';
+    }
+    if (payload.containsKey('metrics_session_reset_after_seconds')) {
+      final Object? resetAfterSeconds = payload['metrics_session_reset_after_seconds'];
+      if (resetAfterSeconds is! int || resetAfterSeconds < 0) {
+        return 'metrics_session_reset_after_seconds must be a non-negative integer';
+      }
+      if (resetAfterSeconds >= (payload['render_window_seconds']! as int)) {
+        return 'metrics_session_reset_after_seconds must be less than render_window_seconds';
+      }
     }
     if (payload['auto_upload_logs'] != true) {
       return 'auto_upload_logs must be true';

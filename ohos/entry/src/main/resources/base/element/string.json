@@ -1,0 +1,24 @@
+{
+  "string": [
+    {
+      "name": "app_name",
+      "value": "TiRTC Flutter"
+    },
+    {
+      "name": "module_desc",
+      "value": "TiRTC Flutter Example"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "TiRTC Flutter Example"
+    },
+    {
+      "name": "Camera_permission_reason",
+      "value": "Used to capture local video and show local preview."
+    },
+    {
+      "name": "Microphone_permission_reason",
+      "value": "Used to capture local audio."
+    }
+  ]
+}

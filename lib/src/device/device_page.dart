@@ -9,6 +9,7 @@ import '../demo_device_server_controller.dart';
 import '../demo_downlink_support.dart';
 import '../demo_test_hooks.dart';
 import '../demo_widget_keys.dart';
+import '../widgets/command_panel_sheet.dart';
 import '../widgets/downlink_center_loading.dart';
 import '../widgets/notice_dialog.dart';
 import '../widgets/player_page_widgets.dart';
@@ -36,6 +37,7 @@ class _DemoDeviceServerPageState extends State<DemoDeviceServerPage> {
   late final DemoDeviceServerController _controller;
   bool _failureDialogShown = false;
   bool _uploadingLogs = false;
+  StateSetter? _commandSheetSetState;
 
   @override
   void initState() {
@@ -52,6 +54,7 @@ class _DemoDeviceServerPageState extends State<DemoDeviceServerPage> {
   @override
   void dispose() {
     _controller.removeListener(_handleControllerChanged);
+    _commandSheetSetState = null;
     unawaited(_controller.release(reason: 'manual_page_dispose').whenComplete(_controller.shutdownRuntime));
     super.dispose();
   }
@@ -72,6 +75,10 @@ class _DemoDeviceServerPageState extends State<DemoDeviceServerPage> {
           ),
         ),
         actions: <Widget>[
+          PlayerCommandButton(
+            key: DemoWidgetKeys.deviceServerCommandButton,
+            onOpenCommands: _showCommandPanel,
+          ),
           PlayerLogUploadButton(
             uploadingLogs: _uploadingLogs,
             onUploadLogs: _uploadLogs,
@@ -98,6 +105,7 @@ class _DemoDeviceServerPageState extends State<DemoDeviceServerPage> {
   void _handleControllerChanged() {
     if (mounted) {
       setState(() {});
+      _commandSheetSetState?.call(() {});
       _showFailureDialogIfNeeded();
     }
   }
@@ -132,6 +140,21 @@ class _DemoDeviceServerPageState extends State<DemoDeviceServerPage> {
         });
       }
     }
+  }
+
+  Future<void> _showCommandPanel() {
+    return showDemoCommandPanelSheet(
+      context: context,
+      title: '设备命令',
+      connected: () => _controller.commandConnected,
+      events: () => _controller.commandEvents,
+      onSendCommand: _controller.sendCommand,
+      onSheetStateChanged: (StateSetter? setState) {
+        if (mounted) {
+          _commandSheetSetState = setState;
+        }
+      },
+    );
   }
 
   Future<void> _showLogUploadResultIfMounted({

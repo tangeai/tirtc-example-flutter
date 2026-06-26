@@ -68,9 +68,23 @@ final class DemoDeviceServerConfigurationStore {
     await preferences.putString(key: endpointKey, value: configuration.endpoint);
     await preferences.putString(key: deviceIdKey, value: configuration.deviceId);
     await preferences.putString(key: deviceSecretKeyKey, value: configuration.deviceSecretKey);
-    await preferences.putString(key: cameraFacingKey, value: configuration.cameraFacing.name);
-    await preferences.putString(key: videoCodecKey, value: configuration.videoCodec.name);
-    await preferences.putString(key: encoderPreferenceKey, value: configuration.encoderPreference.name);
+    await saveDevicePreferences(
+      cameraFacing: configuration.cameraFacing,
+      videoCodec: configuration.videoCodec,
+      encoderPreference: configuration.encoderPreference,
+    );
+  }
+
+  Future<void> saveDevicePreferences({
+    required DemoDeviceCameraFacing cameraFacing,
+    required DemoDeviceVideoCodec videoCodec,
+    required DemoDeviceEncoderPreference encoderPreference,
+  }) async {
+    final DemoDeviceEncoderPreference resolvedPreference =
+        videoCodec == DemoDeviceVideoCodec.mjpeg ? DemoDeviceEncoderPreference.software : encoderPreference;
+    await preferences.putString(key: cameraFacingKey, value: cameraFacing.name);
+    await preferences.putString(key: videoCodecKey, value: videoCodec.name);
+    await preferences.putString(key: encoderPreferenceKey, value: resolvedPreference.name);
   }
 
   Future<String> _readString(String key, {String defaultValue = ''}) async {

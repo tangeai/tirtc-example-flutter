@@ -13,13 +13,13 @@ PODS:
     - GoogleToolboxForMac/Defines (= 4.2.1)
   - "GoogleToolboxForMac/NSData+zlib (4.2.1)":
     - GoogleToolboxForMac/Defines (= 4.2.1)
-  - GoogleUtilities/Environment (8.1.0):
+  - GoogleUtilities/Environment (8.1.1):
     - GoogleUtilities/Privacy
-  - GoogleUtilities/Logger (8.1.0):
+  - GoogleUtilities/Logger (8.1.1):
     - GoogleUtilities/Environment
     - GoogleUtilities/Privacy
-  - GoogleUtilities/Privacy (8.1.0)
-  - GoogleUtilities/UserDefaults (8.1.0):
+  - GoogleUtilities/Privacy (8.1.1)
+  - GoogleUtilities/UserDefaults (8.1.1):
     - GoogleUtilities/Logger
     - GoogleUtilities/Privacy
   - GTMSessionFetcher/Core (3.5.0)
@@ -50,11 +50,11 @@ PODS:
     - nanopb/encode (= 3.30910.0)
   - nanopb/decode (3.30910.0)
   - nanopb/encode (3.30910.0)
-  - PromisesObjC (2.4.0)
-  - TiRTC_AV (0.1.0-alpha.20260509163150)
+  - PromisesObjC (2.4.1)
+  - TiRTC_AV (0.2.0-alpha.5)
   - tirtc_av_kit (1.0.0):
     - Flutter
-    - TiRTC_AV (= 0.1.0-alpha.20260509163150)
+    - TiRTC_AV (= 0.2.0-alpha.5)
 
 DEPENDENCIES:
   - Flutter (from `Flutter`)
@@ -92,7 +92,7 @@ SPEC CHECKSUMS:
   GoogleDataTransport: aae35b7ea0c09004c3797d53c8c41f66f219d6a7
   GoogleMLKit: eff9e23ec1d90ea4157a1ee2e32a4f610c5b3318
   GoogleToolboxForMac: d1a2cbf009c453f4d6ded37c105e2f67a32206d8
-  GoogleUtilities: 00c88b9a86066ef77f0da2fab05f65d7768ed8e1
+  GoogleUtilities: 4f2618a4a1e762a1ee134a1e2323bba9843e06da
   GTMSessionFetcher: 5aea5ba6bd522a239e236100971f10cb71b96ab6
   integration_test: 252f60fa39af5e17c3aa9899d35d908a0721b573
   MLImage: 0ad1c5f50edd027672d8b26b0fee78a8b4a0fc56
@@ -101,10 +101,10 @@ SPEC CHECKSUMS:
   MLKitVision: 45e79d68845a2de77e2dd4d7f07947f0ed157b0e
   mobile_scanner: fd0054c52ede661e80bf5a4dea477a2467356bee
   nanopb: fad817b59e0457d11a5dfbde799381cd727c1275
-  PromisesObjC: f5707f49cb48b9636751c5b2e7d227e43fba9f47
-  TiRTC_AV: 1b82eaf3addc5827a91ff27e9b8fb91a8398f712
-  tirtc_av_kit: 98ee462a359471a1b25ec5ef83c313736dc8804d
+  PromisesObjC: 752c3227f599e3467650e47ea36f433eeb10c273
+  TiRTC_AV: b1653411ec79c1854901e1503ad19e49e284a028
+  tirtc_av_kit: 3d56b718a3e6b462840e0350a5cca792a3ab213c
 
-PODFILE CHECKSUM: e3004c801302256f4b9789c1e292a620aa72e3d9
+PODFILE CHECKSUM: c2a8c235a0b61751144969513d50229b810fb19f
 
-COCOAPODS: 1.16.2
+COCOAPODS: 1.15.2

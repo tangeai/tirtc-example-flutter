@@ -12,7 +12,7 @@ final class ExampleTheme {
   static const Color brandText = Color(0xFF767676);
   static const Color videoBackground = Color(0xFF252525);
   static const Color surface = Color(0xFFFFFFFF);
-  static const Color inputSurface = Color(0xFFF4F1EA);
+  static const Color inputSurface = surface;
   static const Color inputBorder = Color(0xFFE1DBCF);
   static const Color overlayGlow = Color(0x14659287);
   static const Color overlayShadow = Color(0x0DE7D9B7);
@@ -97,11 +97,11 @@ final class ExampleTheme {
         ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(20),
-          borderSide: const BorderSide(color: inputBorder),
+          borderSide: BorderSide.none,
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(20),
-          borderSide: const BorderSide(color: inputBorder),
+          borderSide: BorderSide.none,
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(20),

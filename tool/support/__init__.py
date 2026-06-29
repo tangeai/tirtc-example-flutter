@@ -1,1 +1,1 @@
-"""Shared support for the Flutter SDK test matrix entries."""
+"""Shared support for the Flutter SDK test cases entries."""

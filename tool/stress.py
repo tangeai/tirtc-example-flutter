@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import sys
 
-from support.options import MatrixArgumentParser, add_common_options
+from support.options import CaseArgumentParser, add_common_options
 from support.dry_layers import run_first_slice
 
 
-def parser() -> MatrixArgumentParser:
-  result = MatrixArgumentParser(description="Run Flutter SDK stress matrix.")
+def parser() -> CaseArgumentParser:
+  result = CaseArgumentParser(description="Run Flutter SDK stress cases.")
   add_common_options(result, dry_run=True)
   return result
 

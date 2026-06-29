@@ -14,7 +14,7 @@ from typing import Any
 from support.automation_env import missing_automation_env_vars
 from support.cli_resolver import CliResolutionError, resolve_cli
 from support.dry_layers import local_audio_input_slice, run_first_slice
-from support.options import MatrixArgumentParser, add_common_options, default_artifact_root, new_run_id, validate_platform_args
+from support.options import CaseArgumentParser, add_common_options, default_artifact_root, new_run_id, validate_platform_args
 from support.paths import build_root, example_root, plugin_root
 from support.performance_downlink_metrics import (
   apply_failure_marker,
@@ -60,8 +60,8 @@ def _load_self_test_helpers():
   return issue_token, normalize_bootstrap, start_source, wait_for_bootstrap
 
 
-def parser() -> MatrixArgumentParser:
-  result = MatrixArgumentParser(description="Run Flutter SDK performance matrix.")
+def parser() -> CaseArgumentParser:
+  result = CaseArgumentParser(description="Run Flutter SDK performance cases.")
   add_common_options(result, dry_run=True)
   result.add_argument("--case")
   result.add_argument("--self-test", action="store_true")

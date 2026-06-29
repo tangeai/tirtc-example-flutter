@@ -42,7 +42,7 @@ class CliResolutionError(ValueError):
 
 
 def _repo_local_cli() -> Path | None:
-  explicit_root = os.environ.get("TIRTC_MATRIX_REPO_ROOT")
+  explicit_root = os.environ.get("TIRTC_AV_REPO_ROOT")
   root = Path(explicit_root) if explicit_root else find_repo_root()
   if root is None:
     return None

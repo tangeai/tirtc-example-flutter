@@ -12,7 +12,7 @@ from typing import Any
 from .automation_env import missing_automation_blocked_reason
 from .cli_resolver import command_env, resolve_cli
 from .device_lane_lock import DeviceLaneLockBusy, acquire_flutter_device_lane_lock, mobile_device_lane_required
-from .options import MatrixArgumentParser, add_common_options, default_artifact_root, new_run_id, validate_platform_args
+from .options import CaseArgumentParser, add_common_options, default_artifact_root, new_run_id, validate_platform_args
 from .paths import legacy_scripts_dir
 from .summary import base_summary, finish_summary, now_iso, read_json, write_json
 
@@ -24,8 +24,8 @@ def _load_legacy(module_name: str) -> Any:
   return importlib.import_module(module_name)
 
 
-def _public_parser(layer: str) -> MatrixArgumentParser:
-  parser = MatrixArgumentParser(description=f"Run Flutter SDK {layer} matrix.")
+def _public_parser(layer: str) -> CaseArgumentParser:
+  parser = CaseArgumentParser(description=f"Run Flutter SDK {layer} cases.")
   add_common_options(parser, dry_run=False)
   if layer == "smoke":
     parser.add_argument("--flow", default="downlink_ui", choices=("downlink_ui", "device_server", "device_server_ui", "all"))
@@ -239,7 +239,7 @@ def _layer_evidence(layer: str, legacy_summary: dict[str, Any], mode: str, *, ar
     if isinstance(legacy_summary.get("scenario_results"), dict)
     else list(legacy_summary.get("scenario_results") or []),
     "codec_results": list(legacy_summary.get("codec_results") or []),
-    "audio_matrix_results": list(legacy_summary.get("audio_matrix_results") or []),
+    "audio_case_results": list(legacy_summary.get("audio_case_results") or []),
     "markers_path": legacy_summary.get("markers_path") or "flutter/markers.jsonl",
     "required_markers": list(legacy_summary.get("required_markers") or []),
     "counterpart_summary_path": legacy_summary.get("counterpart_summary_path"),
@@ -283,7 +283,7 @@ def run_legacy_layer(module_name: str, layer: str, argv: list[str]) -> int:
     cli_npm_spec=args.cli_npm_spec,
     check_available=False,
   )
-  matrix_summary = base_summary(
+  case_summary = base_summary(
     entry=layer,
     run_id=run_id,
     platform=args.platform,
@@ -293,7 +293,7 @@ def run_legacy_layer(module_name: str, layer: str, argv: list[str]) -> int:
     started_at=started_at,
   )
   if getattr(args, "ohos_device_resolution", None):
-    matrix_summary["evidence"]["ohos_device_resolution"] = args.ohos_device_resolution
+    case_summary["evidence"]["ohos_device_resolution"] = args.ohos_device_resolution
 
   device_lane_lock = None
   if mobile_device_lane_required(args.platform, dry_run=getattr(args, "dry_run", False)):
@@ -307,12 +307,12 @@ def run_legacy_layer(module_name: str, layer: str, argv: list[str]) -> int:
           "run_id": run_id,
         }
       )
-      matrix_summary["evidence"]["device_lane_lock"] = device_lane_lock.evidence()
+      case_summary["evidence"]["device_lane_lock"] = device_lane_lock.evidence()
     except DeviceLaneLockBusy as error:
-      matrix_summary["blocked_reason"] = "device_lane_lock_busy"
-      matrix_summary["failure_stage"] = "blocked"
-      matrix_summary["evidence"]["device_lane_lock"] = error.evidence()
-      return finish_summary(artifact_root, matrix_summary)
+      case_summary["blocked_reason"] = "device_lane_lock_busy"
+      case_summary["failure_stage"] = "blocked"
+      case_summary["evidence"]["device_lane_lock"] = error.evidence()
+      return finish_summary(artifact_root, case_summary)
 
   old_env = os.environ.copy()
   os.environ.clear()
@@ -338,9 +338,9 @@ def run_legacy_layer(module_name: str, layer: str, argv: list[str]) -> int:
   legacy_summary = read_json(legacy_path) if legacy_path.is_file() else {}
   write_json(artifact_root / "raw/legacy-summary.json", legacy_summary)
   _redact_legacy_secrets(artifact_root)
-  matrix_summary["run_ok"] = rc == 0 and legacy_summary.get("run_ok") is True
-  matrix_summary["blocked_reason"] = legacy_summary.get("blocked_reason")
-  matrix_summary["failure_stage"] = legacy_summary.get("failure_stage")
+  case_summary["run_ok"] = rc == 0 and legacy_summary.get("run_ok") is True
+  case_summary["blocked_reason"] = legacy_summary.get("blocked_reason")
+  case_summary["failure_stage"] = legacy_summary.get("failure_stage")
   for key in (
     "prepared_state_schema_version",
     "artifact_visibility",
@@ -383,14 +383,14 @@ def run_legacy_layer(module_name: str, layer: str, argv: list[str]) -> int:
     "video_local_latency_output_average_ms",
   ):
     if key in legacy_summary:
-      matrix_summary[key] = legacy_summary[key]
-  if matrix_summary["blocked_reason"]:
-    matrix_summary["failure_stage"] = "blocked"
-  matrix_summary["evidence"].update(_layer_evidence(layer, legacy_summary, "real", artifact_root=artifact_root, legacy=legacy, args=args))
-  if matrix_summary["run_ok"]:
-    matrix_summary["blocked_reason"] = None
-    matrix_summary["failure_stage"] = None
-  return finish_summary(artifact_root, matrix_summary)
+      case_summary[key] = legacy_summary[key]
+  if case_summary["blocked_reason"]:
+    case_summary["failure_stage"] = "blocked"
+  case_summary["evidence"].update(_layer_evidence(layer, legacy_summary, "real", artifact_root=artifact_root, legacy=legacy, args=args))
+  if case_summary["run_ok"]:
+    case_summary["blocked_reason"] = None
+    case_summary["failure_stage"] = None
+  return finish_summary(artifact_root, case_summary)
 
 
 def _redact_legacy_secrets(root: Path) -> None:

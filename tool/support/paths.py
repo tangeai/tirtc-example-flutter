@@ -34,4 +34,8 @@ def build_root() -> Path:
 
 
 def legacy_scripts_dir() -> Path:
-  return plugin_root() / "scripts"
+  candidates = (
+    plugin_root() / "scripts",
+    plugin_root() / "tirtc_av_kit" / "scripts",
+  )
+  return next((candidate for candidate in candidates if candidate.is_dir()), candidates[0])

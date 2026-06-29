@@ -11,7 +11,7 @@ from .summary import now_iso
 PLATFORMS = ("macos", "android", "ios", "ohos", "all")
 
 
-class MatrixArgumentParser(argparse.ArgumentParser):
+class CaseArgumentParser(argparse.ArgumentParser):
   def error(self, message: str) -> None:
     self.print_usage(sys.stderr)
     self.exit(3, f"{self.prog}: error: {message}\n")

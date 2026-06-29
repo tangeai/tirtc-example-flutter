@@ -16,7 +16,14 @@ from unittest.mock import patch
 TOOL_ROOT = Path(__file__).resolve().parents[1]
 if str(TOOL_ROOT) not in sys.path:
   sys.path.insert(0, str(TOOL_ROOT))
-SCRIPTS_ROOT = TOOL_ROOT.parents[1] / "scripts"
+SCRIPTS_ROOT_CANDIDATES = (
+  TOOL_ROOT.parents[1] / "scripts",
+  TOOL_ROOT.parents[1] / "tirtc_av_kit" / "scripts",
+)
+SCRIPTS_ROOT = next(
+  (candidate for candidate in SCRIPTS_ROOT_CANDIDATES if (candidate / "flutter_integration_test.py").is_file()),
+  SCRIPTS_ROOT_CANDIDATES[0],
+)
 if str(SCRIPTS_ROOT) not in sys.path:
   sys.path.insert(0, str(SCRIPTS_ROOT))
 
@@ -48,7 +55,7 @@ class ToolContractStackTest(unittest.TestCase):
 
   def run_public_tool(self, root: Path, entry: str, args: list[str]) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
-    env.pop("TIRTC_MATRIX_REPO_ROOT", None)
+    env.pop("TIRTC_AV_REPO_ROOT", None)
     env.pop("TIRTC_DEVTOOLS_CLI_SOURCE", None)
     env.pop("TIRTC_DEVTOOLS_CLI", None)
     return subprocess.run(
@@ -62,7 +69,7 @@ class ToolContractStackTest(unittest.TestCase):
     )
 
   def sync_public_example(self, root: Path) -> None:
-    sync_script = TOOL_ROOT.parents[1] / "scripts/sync_public_example_repo.py"
+    sync_script = SCRIPTS_ROOT / "sync_public_example_repo.py"
     result = subprocess.run(
       [sys.executable, str(sync_script), "--target-root", str(root)],
       stdout=subprocess.PIPE,
@@ -81,7 +88,7 @@ class ToolContractStackTest(unittest.TestCase):
 
   def test_cli_resolver_uses_npm_outside_repo(self) -> None:
     with tempfile.TemporaryDirectory() as temp_dir:
-      with patch.dict(os.environ, {"TIRTC_MATRIX_REPO_ROOT": temp_dir}, clear=False):
+      with patch.dict(os.environ, {"TIRTC_AV_REPO_ROOT": temp_dir}, clear=False):
         resolved = resolve_cli(check_available=False)
     self.assertEqual(resolved.source, "npm")
     self.assertEqual(resolved.command, ["npx", "--yes", "tirtc-devtools-cli@latest"])
@@ -96,7 +103,7 @@ class ToolContractStackTest(unittest.TestCase):
 
   def test_cli_resolver_reports_missing_local(self) -> None:
     with tempfile.TemporaryDirectory() as temp_dir:
-      with patch.dict(os.environ, {"TIRTC_MATRIX_REPO_ROOT": temp_dir}, clear=False):
+      with patch.dict(os.environ, {"TIRTC_AV_REPO_ROOT": temp_dir}, clear=False):
         with self.assertRaises(CliResolutionError) as ctx:
           resolve_cli(cli_source="local", check_available=False)
     self.assertEqual(ctx.exception.exit_code, 2)
@@ -607,7 +614,7 @@ class ToolContractStackTest(unittest.TestCase):
       self.assertFalse(written["run_ok"])
       self.assertFalse(written["evidence"]["summary_schema_valid"])
 
-  def test_integration_pass_requires_layer_evidence_log_upload_and_audio_matrix(self) -> None:
+  def test_integration_pass_requires_layer_evidence_log_upload_and_audio_cases(self) -> None:
     with tempfile.TemporaryDirectory() as temp_dir:
       root = Path(temp_dir) / "integration"
       summary = base_summary(
@@ -623,7 +630,7 @@ class ToolContractStackTest(unittest.TestCase):
       summary["evidence"].update(
         {
           "scenario_results": [{"status": "passed"}],
-          "audio_matrix_results": [{"status": "passed", "evidence_path": "case/summary.json"}],
+          "audio_case_results": [{"status": "passed", "evidence_path": "case/summary.json"}],
           "av_contract_ok": True,
           "log_upload": {"required": True, "status": "failed", "log_id": None},
           "teardown_ok": True,
@@ -650,7 +657,7 @@ class ToolContractStackTest(unittest.TestCase):
       summary["evidence"].update(
         {
           "scenario_results": [{"status": "passed"}],
-          "audio_matrix_results": [{"status": "passed", "evidence_path": "case/summary.json"}],
+          "audio_case_results": [{"status": "passed", "evidence_path": "case/summary.json"}],
           "av_contract_ok": True,
           "log_upload": {"required": True, "status": "passed", "log_id": "log-123"},
           "teardown_ok": True,

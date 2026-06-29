@@ -214,7 +214,7 @@ def dependency_state_evidence() -> dict[str, Any]:
   return result
 
 
-def matrix_result(case_id: str, layer: object, status: object, artifact_path: object | None = None) -> dict[str, Any]:
+def case_result(case_id: str, layer: object, status: object, artifact_path: object | None = None) -> dict[str, Any]:
   verdict = "passed" if status in {"passed", "real", "dry_run"} else "blocked" if status == "blocked" else "failed"
   return {
     "case_id": case_id,
@@ -225,7 +225,7 @@ def matrix_result(case_id: str, layer: object, status: object, artifact_path: ob
   }
 
 
-def default_matrix_result(summary: dict[str, Any]) -> dict[str, Any]:
+def default_case_result(summary: dict[str, Any]) -> dict[str, Any]:
   verdict = "passed" if summary.get("run_ok") is True else "blocked" if summary.get("failure_stage") == "blocked" else "failed"
   return {
     "case_id": f"{summary.get('layer')}.default",
@@ -236,13 +236,13 @@ def default_matrix_result(summary: dict[str, Any]) -> dict[str, Any]:
   }
 
 
-def default_matrix_results(summary: dict[str, Any]) -> list[dict[str, Any]]:
+def default_case_results(summary: dict[str, Any]) -> list[dict[str, Any]]:
   evidence = summary.get("evidence", {})
   layer = summary.get("layer")
   if layer == "smoke":
     ui_flow = evidence.get("ui_flow") if isinstance(evidence, dict) else None
     status = ui_flow.get("status") if isinstance(ui_flow, dict) else "passed" if summary.get("run_ok") is True else "failed"
-    return [matrix_result("smoke.public_ui", layer, status, summary.get("artifact_root"))]
+    return [case_result("smoke.public_ui", layer, status, summary.get("artifact_root"))]
   if layer == "integration" and isinstance(evidence, dict):
     results: list[dict[str, Any]] = []
     for item in evidence.get("scenario_results", []):
@@ -251,17 +251,17 @@ def default_matrix_results(summary: dict[str, Any]) -> list[dict[str, Any]]:
       scenario = item.get("scenario")
       codec = item.get("codec")
       case_id = f"{scenario}:{codec}" if isinstance(scenario, str) and isinstance(codec, str) else str(scenario or "integration.scenario")
-      results.append(matrix_result(case_id, layer, item.get("status"), item.get("artifact_root") or item.get("summary_path")))
-    for item in evidence.get("audio_matrix_results", []):
+      results.append(case_result(case_id, layer, item.get("status"), item.get("artifact_root") or item.get("summary_path")))
+    for item in evidence.get("audio_case_results", []):
       if not isinstance(item, dict) or not isinstance(item.get("case_id"), str):
         continue
-      results.append(matrix_result(item["case_id"], layer, item.get("status"), item.get("evidence_path")))
-    return results or [default_matrix_result(summary)]
+      results.append(case_result(item["case_id"], layer, item.get("status"), item.get("evidence_path")))
+    return results or [default_case_result(summary)]
   if layer in {"performance", "stability", "stress"} and isinstance(evidence, dict):
     case = evidence.get(f"{layer}_case")
     if isinstance(case, dict):
-      return [matrix_result(str(case.get("case_id") or f"{layer}.first_slice"), layer, case.get("status"), summary.get("artifact_root"))]
-  return [default_matrix_result(summary)]
+      return [case_result(str(case.get("case_id") or f"{layer}.first_slice"), layer, case.get("status"), summary.get("artifact_root"))]
+  return [default_case_result(summary)]
 
 
 def evidence_has_video_output(summary: dict[str, Any]) -> bool:
@@ -270,7 +270,7 @@ def evidence_has_video_output(summary: dict[str, Any]) -> bool:
     return False
   if evidence.get("av_output_observed") is True or evidence.get("av_contract_ok") is True:
     return True
-  for key in ("scenario_results", "audio_matrix_results"):
+  for key in ("scenario_results", "audio_case_results"):
     value = evidence.get(key)
     if isinstance(value, list):
       for item in value:
@@ -427,7 +427,7 @@ def base_summary(
         "flutter_command": flutter_command_evidence(),
         "dependency_state": dependency_state_evidence(),
         "texture_evidence": [],
-        "matrix_results": [],
+        "case_results": [],
         "blocked_reasons": [],
         "redaction": redaction_summary(artifact_root),
       }
@@ -463,7 +463,7 @@ def validate_common(summary: dict[str, Any]) -> bool:
       "flutter_command",
       "dependency_state",
       "texture_evidence",
-      "matrix_results",
+      "case_results",
       "blocked_reasons",
       "redaction",
     ):
@@ -471,7 +471,7 @@ def validate_common(summary: dict[str, Any]) -> bool:
         return False
     if not isinstance(summary["texture_evidence"], list):
       return False
-    if not isinstance(summary["matrix_results"], list):
+    if not isinstance(summary["case_results"], list):
       return False
     if not isinstance(summary["blocked_reasons"], list):
       return False
@@ -582,7 +582,7 @@ def _validate_ohos_common_contract(summary: dict[str, Any]) -> bool:
 
 
 def _validate_ohos_run_contract(summary: dict[str, Any]) -> bool:
-  matrix_results = summary.get("matrix_results")
+  case_results = summary.get("case_results")
   blocked_reasons = summary.get("blocked_reasons")
   if summary.get("run_ok") is True:
     command = summary.get("flutter_command")
@@ -611,9 +611,9 @@ def _validate_ohos_run_contract(summary: dict[str, Any]) -> bool:
       return False
     if not isinstance(blocked_reasons, list) or blocked_reasons:
       return False
-    if not isinstance(matrix_results, list) or not matrix_results:
+    if not isinstance(case_results, list) or not case_results:
       return False
-    if any(not isinstance(item, dict) or item.get("verdict") != "passed" for item in matrix_results):
+    if any(not isinstance(item, dict) or item.get("verdict") != "passed" for item in case_results):
       return False
     if summary.get("redaction", {}).get("verdict") != "passed":
       return False
@@ -716,7 +716,7 @@ def _all_results_passed(value: object) -> bool:
 
 def _validate_integration_pass(evidence: dict[str, Any]) -> bool:
   counterpart_summary_path = evidence.get("counterpart_summary_path")
-  audio_results = evidence.get("audio_matrix_results")
+  audio_results = evidence.get("audio_case_results")
   codec_results_passed = _all_results_passed(evidence.get("codec_results"))
   scenario_results_passed = _all_results_passed(evidence.get("scenario_results"))
   audio_evidence_paths_ok = (
@@ -808,8 +808,8 @@ def finish_summary(root: Path, summary: dict[str, Any]) -> int:
           "next_action": "resolve blocked prerequisite and rerun the lane",
         }
       ]
-    if not summary.get("matrix_results"):
-      summary["matrix_results"] = default_matrix_results(summary)
+    if not summary.get("case_results"):
+      summary["case_results"] = default_case_results(summary)
     if not summary.get("texture_evidence"):
       summary["texture_evidence"] = texture_evidence_from_artifact(root, summary)
   summary["evidence"]["redaction_ok"] = summary.get("redaction", {}).get("verdict") == "passed" if summary.get("platform") == "ohos" else redaction_ok(root)

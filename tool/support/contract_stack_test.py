@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -28,6 +29,7 @@ if str(SCRIPTS_ROOT) not in sys.path:
   sys.path.insert(0, str(SCRIPTS_ROOT))
 
 from support.cli_resolver import CliResolutionError, resolve_cli
+from support.dry_layers import run_first_slice
 from support.ohos_device import select_ohos_target
 from support.options import validate_platform_args
 from support.performance_downlink_metrics import (
@@ -38,7 +40,7 @@ from support.performance_downlink_metrics import (
 )
 from support.performance_source_summary import write_source_summary
 from support.summary import base_summary, finish_summary, now_iso
-from performance import _prepared_state_env
+from performance import DEFAULT_AUDIO_SAMPLE_RATE_HZ, _base_self_test_summary, _child_path_arg, _payload, _prepared_state_env
 from flutter_integration_test import flutter_test_command
 
 
@@ -78,6 +80,12 @@ class ToolContractStackTest(unittest.TestCase):
       check=False,
     )
     self.assertEqual(result.returncode, 0, result.stderr)
+
+  def current_plugin_version(self) -> str:
+    pubspec = (SCRIPTS_ROOT.parent / "pubspec.yaml").read_text(encoding="utf-8")
+    match = re.search(r"^version:\s*(\S+)\s*$", pubspec, re.MULTILINE)
+    self.assertIsNotNone(match)
+    return match.group(1)
 
   def test_cli_resolver_defaults_to_repo_local_when_available(self) -> None:
     resolved = resolve_cli(check_available=False)
@@ -231,6 +239,30 @@ class ToolContractStackTest(unittest.TestCase):
       self.assertNotIn("secret-token", (root / "summary.json").read_text(encoding="utf-8"))
       self.assertNotIn("secret-token", (root / "raw/performance-input.redacted.json").read_text(encoding="utf-8"))
 
+  def test_downlink_metrics_self_test_uses_current_cli_audio_asset_rate(self) -> None:
+    args = Namespace(
+      platform="android",
+      cli_source="local",
+      cli_npm_spec=None,
+      cli_path=None,
+      duration_seconds=180,
+      warmup_seconds=30,
+      app_id="app",
+      endpoint="https://endpoint.example",
+      remote_id="device",
+      token="secret-token",
+      audio_stream_id=10,
+      video_stream_id=11,
+    )
+
+    summary = _base_self_test_summary(args, "run-1", Path("/tmp/performance"), "real")
+    payload = _payload(args, "run-1")
+
+    self.assertEqual(DEFAULT_AUDIO_SAMPLE_RATE_HZ, 16000)
+    self.assertEqual(summary["counterpart_profile"]["audio_sample_rate_hz"], 16000)
+    self.assertEqual(payload["audio_sample_rate_hz"], 16000)
+    self.assertEqual(payload["audio_channels"], 1)
+
   def test_downlink_metrics_period_summary_rejects_low_video_fps(self) -> None:
     summary: dict[str, object] = {}
     snapshot = {
@@ -342,10 +374,14 @@ class ToolContractStackTest(unittest.TestCase):
         stopped_at="2026-06-23T00:00:02Z",
         exit_code=0,
         teardown_ok=True,
+        audio_sample_rate_hz=DEFAULT_AUDIO_SAMPLE_RATE_HZ,
       )
       summary: dict[str, object] = {}
       copy_self_test_source_facts(summary, source_summary)
 
+      self.assertEqual(source_summary["profile"]["audio_codec"], "g711a")
+      self.assertEqual(source_summary["profile"]["audio_sample_rate_hz"], 16000)
+      self.assertEqual(source_summary["profile"]["audio_channels"], 1)
       self.assertEqual(source_summary["source_driver_summary_path"], "source/driver-summary.json")
       self.assertTrue((source_root / "driver-summary.json").is_file())
       self.assertEqual(summary["source_driver_summary_path"], "source/driver-summary.json")
@@ -428,6 +464,11 @@ class ToolContractStackTest(unittest.TestCase):
 
     self.assertEqual(_prepared_state_env(macos_args, prepared), {"TIRTC_AV_LOCAL_POD_PATH": "/tmp/TiRTC_AV-local"})
     self.assertEqual(_prepared_state_env(android_args, prepared), {})
+
+  def test_downlink_metrics_self_test_child_paths_are_absolute(self) -> None:
+    self.assertTrue(Path(_child_path_arg("relative/performance/client")).is_absolute())
+    absolute_path = Path("/tmp/prepared-state.json")
+    self.assertEqual(_child_path_arg(absolute_path), str(absolute_path.resolve()))
 
   def test_downlink_metrics_self_test_blocks_on_platform_mismatched_prepared_state(self) -> None:
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -575,15 +616,85 @@ class ToolContractStackTest(unittest.TestCase):
         self.assertTrue(summary["run_ok"])
         self.assertEqual(summary["evidence"]["cli"]["source"], "npm")
 
-  def test_first_slice_mobile_non_dry_run_is_blocked(self) -> None:
+  def test_public_example_sync_replaces_target_contents(self) -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+      root = Path(temp_dir) / "public_example"
+      root.mkdir()
+      git_head = root / ".git" / "HEAD"
+      git_head.parent.mkdir()
+      git_head.write_text("ref: refs/heads/main\n", encoding="utf-8")
+      (root / "README.md").write_text("stale readme\n", encoding="utf-8")
+      (root / ".gitignore").write_text("stale ignore\n", encoding="utf-8")
+      stale_file = root / "stale" / "old.txt"
+      stale_file.parent.mkdir()
+      stale_file.write_text("stale\n", encoding="utf-8")
+
+      self.sync_public_example(root)
+
+      self.assertTrue(git_head.is_file())
+      self.assertFalse((root / "README.md").exists())
+      self.assertFalse(stale_file.exists())
+      source_gitignore = (SCRIPTS_ROOT.parent / "example" / ".gitignore").read_text(encoding="utf-8")
+      self.assertEqual((root / ".gitignore").read_text(encoding="utf-8"), source_gitignore)
+      pubspec = (root / "pubspec.yaml").read_text(encoding="utf-8")
+      self.assertIn(f"  tirtc_av_kit: {self.current_plugin_version()}", pubspec)
+      self.assertNotIn("path: ..", pubspec)
+
+  def test_android_first_slice_real_uses_performance_child_summary(self) -> None:
     with tempfile.TemporaryDirectory() as temp_dir:
       root = Path(temp_dir) / "stress"
-      result = self.run_tool("stress.py", ["--platform", "android", "--device-id", "android", "--artifact-root", str(root)])
-      self.assertEqual(result.returncode, 2, result.stderr)
+      args = Namespace(
+        platform="android",
+        device_id="android",
+        android_device_id=None,
+        ios_device_id=None,
+        artifact_root=str(root),
+        qualified_counterpart=None,
+        prepared_state=None,
+        cli_source="local",
+        cli_path=None,
+        cli_npm_spec=None,
+        dry_run=False,
+      )
+
+      def fake_run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        artifact_root = Path(command[command.index("--artifact-root") + 1])
+        artifact_root.mkdir(parents=True, exist_ok=True)
+        (artifact_root / "summary.json").write_text(
+          json.dumps(
+            {
+              "run_ok": True,
+              "duration_seconds": 60,
+              "period_summary_available": True,
+              "client_shutdown": {
+                "returned_to_previous_page": True,
+                "app_terminated": True,
+              },
+              "log_upload": {
+                "required": True,
+                "status": "passed",
+                "log_id": "test-log-id",
+              },
+              "prepared_state": {
+                "artifact_visibility": "local",
+                "owner_responsibility_status": "local-debug",
+                "consumed_platform": "android",
+              },
+            }
+          ),
+          encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+      with patch("support.dry_layers.subprocess.run", side_effect=fake_run):
+        self.assertEqual(run_first_slice("stress", args), 0)
       summary = json.loads((root / "summary.json").read_text(encoding="utf-8"))
-      self.assertFalse(summary["run_ok"])
-      self.assertEqual(summary["failure_stage"], "blocked")
-      self.assertEqual(summary["blocked_reason"], "stress_mobile_execution_not_implemented")
+      self.assertTrue(summary["run_ok"])
+      self.assertEqual(summary["evidence"]["stress_case"]["status"], "real")
+      self.assertEqual(summary["evidence"]["completed_iterations"], 1)
+      self.assertTrue(summary["evidence"]["attach_detach_ok"])
+      self.assertTrue(summary["evidence"]["teardown_ok"])
+      self.assertEqual(summary["evidence"]["log_upload"]["status"], "passed")
 
   def test_smoke_pass_requires_counterpart_markers_and_log_upload(self) -> None:
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -640,6 +751,42 @@ class ToolContractStackTest(unittest.TestCase):
       written = json.loads((root / "summary.json").read_text(encoding="utf-8"))
       self.assertFalse(written["run_ok"])
       self.assertFalse(written["evidence"]["summary_schema_valid"])
+
+  def test_local_video_uplink_integration_pass_uses_cell_results_without_audio_cases(self) -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+      root = Path(temp_dir) / "integration"
+      summary = base_summary(
+        entry="integration",
+        run_id="integration-test",
+        platform="android",
+        artifact_root=root,
+        cli={"source": "local"},
+        mode="real",
+        started_at=now_iso(),
+      )
+      summary["run_ok"] = True
+      summary["evidence"].update(
+        {
+          "scenario_results": [],
+          "codec_results": [],
+          "audio_case_results": [],
+          "local_video_uplink_results": [
+            {"status": "passed", "summary_path": "h264-software/summary.json"},
+            {
+              "status": "passed",
+              "summary_path": "mjpeg-hardware/summary.json",
+              "expect": "unsupported",
+              "expected_error_code": 1019,
+              "actual_error_code": 1019,
+            },
+          ],
+          "av_contract_ok": True,
+          "log_upload": {"required": True, "status": "passed", "log_id": "log-123"},
+          "teardown_ok": True,
+        }
+      )
+
+      self.assertEqual(finish_summary(root, summary), 0)
 
   def test_real_public_summary_writes_current_pointer(self) -> None:
     with tempfile.TemporaryDirectory() as temp_dir:

@@ -49,10 +49,9 @@ mixin ExampleRouteLifecycleState<T extends StatefulWidget> on State<T>, WidgetsB
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
+    if (state == AppLifecycleState.resumed || state == AppLifecycleState.inactive) {
       _appForeground = true;
-    } else if (state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.hidden ||
+    } else if (state == AppLifecycleState.hidden ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
       _appForeground = false;

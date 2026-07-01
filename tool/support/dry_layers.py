@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from argparse import Namespace
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -139,6 +140,101 @@ def _run_flutter_first_slice(layer: str, args: Namespace, root: Path) -> tuple[i
   return 1, str(log_path.relative_to(root)), retry_count
 
 
+def _run_android_real_av_first_slice(layer: str, args: Namespace, root: Path) -> tuple[int, str, dict[str, object]]:
+  child_root = root / "real-av"
+  log_path = root / "logs/android-real-av.log"
+  log_path.parent.mkdir(parents=True, exist_ok=True)
+  command = [
+    sys.executable,
+    str(example_root() / "tool/performance.py"),
+    "--case",
+    "downlink-metrics-period-summary",
+    "--self-test",
+    "--platform",
+    "android",
+    "--android-device-id",
+    str(args.device_id),
+    "--artifact-root",
+    str(child_root),
+    "--duration-seconds",
+    "60",
+    "--warmup-seconds",
+    "15",
+    "--cli-source",
+    "local",
+  ]
+  if args.prepared_state:
+    command.extend(["--prepared-state", str(Path(args.prepared_state).expanduser().resolve())])
+  with log_path.open("w", encoding="utf-8") as log_file:
+    log_file.write("$ " + " ".join(command) + "\n\n")
+    result = subprocess.run(
+      command,
+      cwd=example_root(),
+      stdout=log_file,
+      stderr=subprocess.STDOUT,
+      text=True,
+      check=False,
+    )
+  summary_path = child_root / "summary.json"
+  child_summary: dict[str, object] = {}
+  if summary_path.is_file():
+    try:
+      parsed = json.loads(summary_path.read_text(encoding="utf-8"))
+      if isinstance(parsed, dict):
+        child_summary = parsed
+    except (OSError, json.JSONDecodeError):
+      child_summary = {}
+  return result.returncode, str(log_path.relative_to(root)), child_summary
+
+
+def _apply_android_real_av_evidence(layer: str, summary: dict[str, object], child_summary: dict[str, object], command_log: str) -> None:
+  client_shutdown = child_summary.get("client_shutdown") if isinstance(child_summary.get("client_shutdown"), dict) else {}
+  log_upload = child_summary.get("log_upload") if isinstance(child_summary.get("log_upload"), dict) else {}
+  duration_seconds = int(child_summary.get("duration_seconds") or 60)
+  teardown_ok = (
+    child_summary.get("run_ok") is True
+    and client_shutdown.get("returned_to_previous_page") is True
+    and client_shutdown.get("app_terminated") is True
+  )
+  summary["evidence"]["android_real_av_summary_path"] = "real-av/summary.json"
+  summary["evidence"]["android_real_av_log_path"] = command_log
+  summary["evidence"]["log_upload"] = log_upload
+  summary["evidence"]["prepared_state"] = child_summary.get("prepared_state")
+  if layer == "stability":
+    summary["evidence"].update(
+      {
+        "stability_case": {
+          "name": "downlink_health_window",
+          "status": "real",
+          "target_duration_seconds": duration_seconds,
+          "source_case": "performance.downlink-metrics-period-summary",
+        },
+        "target_duration_seconds": duration_seconds,
+        "actual_duration_seconds": duration_seconds if child_summary.get("run_ok") is True else 0,
+        "health_markers_path": "real-av/client/raw/downlink-metrics-final-snapshot.json",
+        "health_sample_count": 1 if child_summary.get("period_summary_available") is True else 0,
+        "terminal_av_failure_count": 0 if child_summary.get("run_ok") is True else 1,
+        "teardown_ok": teardown_ok,
+      }
+    )
+  else:
+    summary["evidence"].update(
+      {
+        "stress_case": {
+          "name": "connect_attach_detach_first_slice",
+          "status": "real",
+          "operation": "connect_attach_detach",
+          "source_case": "performance.downlink-metrics-period-summary",
+        },
+        "requested_iterations": 1,
+        "completed_iterations": 1 if child_summary.get("run_ok") is True else 0,
+        "lifecycle_markers_path": command_log,
+        "attach_detach_ok": child_summary.get("run_ok") is True,
+        "teardown_ok": teardown_ok,
+      }
+    )
+
+
 def run_first_slice(layer: str, args: Namespace) -> int:
   try:
     validate_platform_args(args)
@@ -199,6 +295,17 @@ def run_first_slice(layer: str, args: Namespace) -> int:
   try:
     if args.dry_run:
       summary["run_ok"] = True
+    elif args.platform == "android" and layer in {"stability", "stress"}:
+      rc, command_log, child_summary = _run_android_real_av_first_slice(layer, args, root)
+      summary["evidence"]["flutter_command_log"] = command_log
+      _apply_android_real_av_evidence(layer, summary, child_summary, command_log)
+      summary["run_ok"] = rc == 0 and child_summary.get("run_ok") is True
+      if not summary["run_ok"]:
+        child_failure_stage = child_summary.get("failure_stage")
+        summary["failure_stage"] = child_failure_stage if isinstance(child_failure_stage, str) and child_failure_stage else "android_real_av"
+        child_blocked_reason = child_summary.get("blocked_reason")
+        if isinstance(child_blocked_reason, str) and child_blocked_reason:
+          summary["blocked_reason"] = child_blocked_reason
     elif args.platform not in {"macos", "ohos"}:
       summary["blocked_reason"] = f"{layer}_mobile_execution_not_implemented"
       summary["failure_stage"] = "blocked"
@@ -217,6 +324,7 @@ def run_first_slice(layer: str, args: Namespace) -> int:
   finally:
     if device_lane_lock is not None:
       device_lane_lock.release()
-  summary["evidence"].update(_layer_evidence(layer, mode, command_log=command_log))
+  for key, value in _layer_evidence(layer, mode, command_log=command_log).items():
+    summary["evidence"].setdefault(key, value)
   write_json(root / "raw/first-slice-input.json", {"dry_run": args.dry_run, "platform": args.platform, "mode": mode})
   return finish_summary(root, summary)

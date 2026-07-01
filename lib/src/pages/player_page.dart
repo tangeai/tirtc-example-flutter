@@ -8,15 +8,11 @@ import '../app_theme.dart';
 import '../demo_configuration.dart';
 import '../demo_downlink_session.dart';
 import '../demo_downlink_support.dart';
-import '../demo_echo_command.dart';
-import '../demo_permissions.dart';
 import '../demo_route_lifecycle.dart';
 import '../demo_stream_message.dart';
 import '../demo_test_hooks.dart';
 import '../demo_video_attach_flow.dart';
 import '../demo_widget_keys.dart';
-import '../widgets/command_panel_model.dart';
-import '../widgets/command_panel_sheet.dart';
 import '../widgets/notice_dialog.dart';
 import '../widgets/downlink_center_loading.dart';
 import '../widgets/downlink_metrics_overlay.dart';
@@ -24,6 +20,9 @@ import '../widgets/downlink_metrics_overlay_markers.dart';
 import '../widgets/downlink_metrics_overlay_model.dart';
 import '../widgets/player_page_widgets.dart';
 import '../widgets/stream_message_bubble.dart';
+import 'player_command_controller.dart';
+import 'player_local_audio_controller.dart';
+import 'player_log_upload_controller.dart';
 
 enum _DownlinkViewState { idle, connecting, playing, failed }
 
@@ -48,22 +47,16 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
   static const Duration _metricsPollInterval = Duration(seconds: 1);
 
   final DemoDownlinkAudioSession _audioSession = DemoDownlinkAudioSession();
-  final DemoExamplePermissions _permissions = const DemoExamplePermissions();
-  final DemoLogUploader _logUploader = DemoLogUploader();
-  final DemoEchoCommandResponder _echoResponder = DemoEchoCommandResponder();
   late final DemoDownlinkSession _session;
+  late final DemoPlayerCommandController _commandController;
+  late final DemoPlayerLocalAudioController _localAudioController;
+  late final DemoPlayerLogUploadController _logUploadController;
 
   _DownlinkViewState _downlinkState = _DownlinkViewState.idle;
   String _stageStatusLabel = '加载中';
   bool _shouldKeepPlaying = true;
   int _sessionGeneration = 0;
-  bool _uploadingLogs = false;
   bool _commandConnected = false;
-  bool _localAudioRunning = false;
-  bool _localAudioBusy = false;
-  int? _localAudioAttachedStreamId;
-  int _localAudioStartCount = 0;
-  int _localAudioStopCount = 0;
   bool _smokeConnectedMarked = false;
   bool _smokeAudioPlayingMarked = false;
   bool _smokeVideoRenderingMarked = false;
@@ -76,14 +69,54 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
   Timer? _metricsPollTimer;
   DownlinkMetricsOverlayModel? _metricsOverlay;
   DownlinkMetricsOverlayModel? _lastAvStatsOverlay;
-  List<DemoCommandPanelEvent> _commandEvents = <DemoCommandPanelEvent>[];
-  StateSetter? _commandSheetSetState;
   final DemoStreamMessageOverlayController _streamMessageOverlay = DemoStreamMessageOverlayController();
 
   @override
   void initState() {
     super.initState();
     _session = DemoDownlinkSession();
+    _commandController = DemoPlayerCommandController(
+      session: _session,
+      onChanged: () {
+        if (mounted) {
+          setState(() {});
+        }
+      },
+    );
+    _localAudioController = DemoPlayerLocalAudioController(
+      session: _session,
+      settings: () => widget.configuration.settings,
+      isMounted: () => mounted,
+      isCommandConnected: () => _commandConnected,
+      markerSink: () => widget.smokeMarkerSink,
+      onChanged: () {
+        if (mounted) {
+          setState(() {});
+        }
+      },
+      showMessage: _showPlayerSnack,
+    );
+    _logUploadController = DemoPlayerLogUploadController(
+      isMounted: () => mounted,
+      markerSink: () => widget.smokeMarkerSink,
+      onChanged: () {
+        if (mounted) {
+          setState(() {});
+        }
+      },
+      showResult: ({
+        required String title,
+        required String content,
+      }) {
+        if (!mounted) {
+          return Future<void>.value();
+        }
+        return context.showNoticeDialog(
+          title: title,
+          content: content,
+        );
+      },
+    );
   }
 
   @override
@@ -94,11 +127,9 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     _metricsOverlay = null;
     _lastAvStatsOverlay = null;
     _commandConnected = false;
-    _localAudioRunning = false;
-    _localAudioBusy = false;
-    _localAudioAttachedStreamId = null;
-    _commandEvents = <DemoCommandPanelEvent>[];
-    _commandSheetSetState = null;
+    _localAudioController.resetAfterSessionRelease(notify: false);
+    _logUploadController.reset(notify: false);
+    _commandController.reset(notify: false);
     _clearSessionCallbacks();
     _session.dispose();
     super.dispose();
@@ -345,16 +376,7 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
   Future<void> _releaseSession({required String reason}) async {
     await _session.release(reason: reason);
     _audioSession.releaseIfNeeded(reason: reason);
-    _localAudioAttachedStreamId = null;
-    if (!mounted) {
-      _localAudioRunning = false;
-      _localAudioBusy = false;
-      return;
-    }
-    setState(() {
-      _localAudioRunning = false;
-      _localAudioBusy = false;
-    });
+    _localAudioController.resetAfterSessionRelease(notify: false);
   }
 
   void _clearMetricsOverlay() {
@@ -373,15 +395,14 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
   void _clearCommandState() {
     if (!mounted) {
       _commandConnected = false;
-      _commandEvents = <DemoCommandPanelEvent>[];
-      _commandSheetSetState = null;
+      _commandController.reset(notify: false);
       return;
     }
     setState(() {
       _commandConnected = false;
-      _commandEvents = <DemoCommandPanelEvent>[];
     });
-    _refreshCommandSheet();
+    _commandController.reset(notify: false);
+    _commandController.refreshSheet();
   }
 
   void _handleStreamMessage({
@@ -524,7 +545,7 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
         _downlinkState = _DownlinkViewState.connecting;
         _stageStatusLabel = '加载中';
       });
-      _refreshCommandSheet();
+      _commandController.refreshSheet();
       return;
     }
 
@@ -584,16 +605,7 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     if (!_acceptGeneration(generation)) {
       return;
     }
-    TiRtcLogging.i('flutter_example', 'local_audio_input_state state=${state.name}');
-    if (state == TiRtcInputState.running && !_localAudioRunning) {
-      setState(() {
-        _localAudioRunning = true;
-      });
-    } else if (state != TiRtcInputState.running && _localAudioRunning) {
-      setState(() {
-        _localAudioRunning = false;
-      });
-    }
+    _localAudioController.handleInputState(state);
   }
 
   void _handleLocalAudioInputError({
@@ -604,18 +616,7 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     if (!_acceptGeneration(generation)) {
       return;
     }
-    TiRtcLogging.w('flutter_example', 'local_audio_input_error code=$code message=${message ?? ''}');
-    widget.smokeMarkerSink?.failure(
-      failureStage: 'local_audio_input',
-      message: 'local audio input failed',
-      errorCode: code,
-    );
-    if (mounted) {
-      setState(() {
-        _localAudioRunning = false;
-        _localAudioBusy = false;
-      });
-    }
+    _localAudioController.handleInputError(code: code, message: message);
   }
 
   void _handleVideoState({
@@ -669,7 +670,7 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
       _commandConnected = false;
     });
     TiRtcLogging.w('flutter_example', 'downlink_failed summary=$summary');
-    _refreshCommandSheet();
+    _commandController.refreshSheet();
     _smokeFail(failureStage: 'downlink', message: summary);
   }
 
@@ -767,30 +768,7 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     if (!_acceptGeneration(generation)) {
       return;
     }
-    _appendCommandEvent(
-      DemoCommandPanelEvent(
-        direction: DemoCommandEventDirection.received,
-        commandId: commandId,
-        payload: payload,
-        createdAt: DateTime.now(),
-      ),
-    );
-    final int? echoCode = _echoResponder.handleReceived(
-      commandId: commandId,
-      payload: payload,
-      sendCommand: (int commandId, Uint8List payload) => _session.sendCommand(commandId: commandId, payload: payload),
-    );
-    if (echoCode != null) {
-      _appendCommandEvent(
-        DemoCommandPanelEvent(
-          direction: DemoCommandEventDirection.sent,
-          commandId: commandId,
-          payload: payload,
-          resultCode: echoCode,
-          createdAt: DateTime.now(),
-        ),
-      );
-    }
+    _commandController.handleReceived(commandId: commandId, payload: payload);
   }
 
   void _setCommandConnected(bool connected) {
@@ -804,98 +782,7 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     setState(() {
       _commandConnected = connected;
     });
-    _refreshCommandSheet();
-  }
-
-  Future<int> _sendCommand(int commandId, Uint8List payload) async {
-    final int code = _session.sendCommand(commandId: commandId, payload: payload);
-    _echoResponder.trackLocalSend(
-      commandId: commandId,
-      payload: payload,
-      resultCode: code,
-    );
-    _appendCommandEvent(
-      DemoCommandPanelEvent(
-        direction: DemoCommandEventDirection.sent,
-        commandId: commandId,
-        payload: payload,
-        resultCode: code,
-        createdAt: DateTime.now(),
-      ),
-    );
-    return code;
-  }
-
-  void _appendCommandEvent(DemoCommandPanelEvent event) {
-    if (!mounted) {
-      _commandEvents = trimDemoCommandEvents(<DemoCommandPanelEvent>[..._commandEvents, event]);
-      _commandSheetSetState = null;
-      return;
-    }
-    setState(() {
-      _commandEvents = trimDemoCommandEvents(<DemoCommandPanelEvent>[..._commandEvents, event]);
-    });
-    _refreshCommandSheet();
-  }
-
-  void _refreshCommandSheet() {
-    _commandSheetSetState?.call(() {});
-  }
-
-  Future<void> _uploadLogs() async {
-    if (_uploadingLogs) {
-      return;
-    }
-
-    setState(() {
-      _uploadingLogs = true;
-    });
-
-    try {
-      final ({int code, String? logId})? result = await _logUploader.upload(
-        remoteId: widget.configuration.remoteId,
-        isActive: () => mounted,
-        showResult: _showLogUploadResultIfMounted,
-      );
-      if (result != null && result.code == 0 && (result.logId?.isNotEmpty ?? false)) {
-        widget.smokeMarkerSink?.passed('smoke_log_upload_completed', payload: <String, Object?>{
-          'log_id': result.logId,
-          'code': result.code,
-        });
-      } else if (widget.smokeMarkerSink != null) {
-        _smokeFail(
-          failureStage: 'log_upload',
-          message: 'log upload failed',
-          errorCode: result?.code,
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _uploadingLogs = false;
-        });
-      }
-    }
-  }
-
-  Future<void> _showLogUploadResultIfMounted({
-    required String title,
-    required String content,
-  }) {
-    if (!mounted) {
-      return Future<void>.value();
-    }
-    return _showLogUploadResultDialog(title: title, content: content);
-  }
-
-  Future<void> _showLogUploadResultDialog({
-    required String title,
-    required String content,
-  }) {
-    return context.showNoticeDialog(
-      title: title,
-      content: content,
-    );
+    _commandController.refreshSheet();
   }
 
   Future<void> _showMetricsExplanationDialog() {
@@ -909,17 +796,9 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
   }
 
   Future<void> _showCommandPanel() {
-    return showDemoCommandPanelSheet(
-      context: context,
-      title: '发送命令',
+    return _commandController.showPanel(
+      context,
       connected: () => _commandConnected,
-      events: () => _commandEvents,
-      onSendCommand: _sendCommand,
-      onSheetStateChanged: (StateSetter? setState) {
-        if (mounted) {
-          _commandSheetSetState = setState;
-        }
-      },
     );
   }
 
@@ -946,8 +825,8 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
           ),
           PlayerLogUploadButton(
             key: DemoWidgetKeys.playerLogUploadButton,
-            uploadingLogs: _uploadingLogs,
-            onUploadLogs: _uploadLogs,
+            uploadingLogs: _logUploadController.uploading,
+            onUploadLogs: () => _logUploadController.upload(remoteId: widget.configuration.remoteId),
           ),
         ],
       ),
@@ -1002,9 +881,9 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
                         LocalAudioControlButton(
                           key: DemoWidgetKeys.playerLocalAudioButton,
                           enabled: _commandConnected,
-                          busy: _localAudioBusy,
-                          running: _localAudioRunning,
-                          onPressed: _toggleLocalAudio,
+                          busy: _localAudioController.busy,
+                          running: _localAudioController.running,
+                          onPressed: _localAudioController.toggle,
                         ),
                         DownlinkControlButton(
                           connecting: connecting,
@@ -1038,184 +917,7 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     unawaited(_startDownlink(reason: 'manual_start'));
   }
 
-  void _toggleLocalAudio() {
-    if (_localAudioRunning) {
-      unawaited(_stopLocalAudio(reason: 'manual_stop'));
-      return;
-    }
-    unawaited(_startLocalAudio());
-  }
-
-  Future<void> _startLocalAudio() async {
-    if (_localAudioBusy || !_commandConnected) {
-      return;
-    }
-    setState(() {
-      _localAudioBusy = true;
-    });
-
-    final bool microphoneReady =
-        await _permissions.checkMicrophonePermission() || await _permissions.requestMicrophonePermission();
-    if (!mounted || !_commandConnected) {
-      if (mounted) {
-        setState(() {
-          _localAudioBusy = false;
-        });
-      }
-      return;
-    }
-    if (!microphoneReady) {
-      TiRtcLogging.w('flutter_example', 'local_audio_input_permission_denied');
-      widget.smokeMarkerSink?.failure(
-        failureStage: 'local_audio_permission',
-        message: 'microphone permission denied',
-      );
-      _showLocalAudioSnack('麦克风权限未授权。');
-      if (mounted) {
-        setState(() {
-          _localAudioBusy = false;
-        });
-      }
-      return;
-    }
-
-    final DemoExampleSettings settings = widget.configuration.settings;
-    final int streamId = settings.localAudioStreamId;
-    final TiRtcAudioInputOptions options = _localAudioOptions(settings);
-    TiRtcLogging.i(
-      'flutter_example',
-      'local_audio_input_start_requested stream_id=$streamId '
-          'codec=${settings.localAudioCodec} sample_rate_hz=${settings.localAudioSampleRateHz} '
-          'aec=${settings.localAudioAecEnabled} agc=${settings.localAudioAgcLevel} ans=${settings.localAudioAnsLevel}',
-    );
-
-    int code = await _session.prepareLocalAudio(audioOptions: options);
-    final int? previousStreamId = _localAudioAttachedStreamId;
-    if (code == 0 && _localAudioAttachedStreamId != streamId) {
-      if (_localAudioAttachedStreamId != null) {
-        await _session.stopLocalAudio();
-        await _session.detachLocalAudioFromBoundConnection();
-        _localAudioAttachedStreamId = null;
-      }
-      code = await _session.attachLocalAudio(streamId: streamId);
-      if (code == 0) {
-        widget.smokeMarkerSink?.passed('local_audio_input_attached', payload: <String, Object?>{
-          'stream_id': streamId,
-          'previous_stream_id': previousStreamId,
-        });
-        _localAudioAttachedStreamId = streamId;
-      }
-    }
-    final bool reusedBinding = code == 0 && previousStreamId == streamId;
-    if (code == 0) {
-      code = await _session.startLocalAudio();
-    }
-    if (code == 0) {
-      _localAudioStartCount += 1;
-      TiRtcLogging.i(
-        'flutter_example',
-        'local_audio_input_start_done stream_id=$streamId start_count=$_localAudioStartCount reused_binding=$reusedBinding',
-      );
-      widget.smokeMarkerSink?.passed('local_audio_input_started', payload: <String, Object?>{
-        'stream_id': streamId,
-        'start_count': _localAudioStartCount,
-        'stop_count': _localAudioStopCount,
-        'reused_binding': reusedBinding,
-      });
-      if (mounted) {
-        setState(() {
-          _localAudioRunning = true;
-          _localAudioBusy = false;
-        });
-      }
-      return;
-    }
-
-    TiRtcLogging.w('flutter_example', 'local_audio_input_start_failed code=$code');
-    widget.smokeMarkerSink?.failure(
-      failureStage: 'local_audio_start',
-      message: 'local audio input start failed',
-      errorCode: code,
-    );
-    _showLocalAudioSnack('麦克风启动失败 · ${TiRtc.formatError(code)}');
-    if (mounted) {
-      setState(() {
-        _localAudioRunning = false;
-        _localAudioBusy = false;
-      });
-    }
-  }
-
-  Future<void> _stopLocalAudio({required String reason}) async {
-    if (_localAudioBusy) {
-      return;
-    }
-    setState(() {
-      _localAudioBusy = true;
-    });
-    TiRtcLogging.i('flutter_example', 'local_audio_input_stop_requested reason=$reason');
-    final int code = await _session.stopLocalAudio();
-    if (code == 0) {
-      _localAudioStopCount += 1;
-      TiRtcLogging.i('flutter_example', 'local_audio_input_stop_done stop_count=$_localAudioStopCount');
-      widget.smokeMarkerSink?.passed('local_audio_input_stopped', payload: <String, Object?>{
-        'stream_id': _localAudioAttachedStreamId,
-        'start_count': _localAudioStartCount,
-        'stop_count': _localAudioStopCount,
-      });
-      if (mounted) {
-        setState(() {
-          _localAudioRunning = false;
-          _localAudioBusy = false;
-        });
-      }
-      return;
-    }
-    TiRtcLogging.w('flutter_example', 'local_audio_input_stop_failed code=$code');
-    _showLocalAudioSnack('麦克风停止失败 · ${TiRtc.formatError(code)}');
-    if (mounted) {
-      setState(() {
-        _localAudioBusy = false;
-      });
-    }
-  }
-
-  TiRtcAudioInputOptions _localAudioOptions(DemoExampleSettings settings) {
-    return TiRtcAudioInputOptions(
-      codec: switch (settings.localAudioCodec) {
-        DemoExampleSettings.localAudioCodecAac => TiRtcAudioCodec.aac,
-        DemoExampleSettings.localAudioCodecPcm => TiRtcAudioCodec.pcm,
-        _ => TiRtcAudioCodec.g711a,
-      },
-      sampleRate: settings.localAudioSampleRateHz == DemoExampleSettings.localAudioSampleRate8k
-          ? TiRtcAudioSampleRate.rate8k
-          : TiRtcAudioSampleRate.rate16k,
-      channels: TiRtcAudioChannelCount.mono,
-      aecMode: settings.localAudioAecEnabled ? TiRtcAudioAecMode.enabled : TiRtcAudioAecMode.disabled,
-      agcLevel: _localAudioAgcLevel(settings.localAudioAgcLevel),
-      ansLevel: _localAudioAnsLevel(settings.localAudioAnsLevel),
-    );
-  }
-
-  TiRtcAudioAgcLevel _localAudioAgcLevel(int value) {
-    return switch (value) {
-      1 => TiRtcAudioAgcLevel.low,
-      2 => TiRtcAudioAgcLevel.medium,
-      3 => TiRtcAudioAgcLevel.high,
-      _ => TiRtcAudioAgcLevel.disabled,
-    };
-  }
-
-  TiRtcAudioAnsLevel _localAudioAnsLevel(int value) {
-    return switch (value) {
-      1 => TiRtcAudioAnsLevel.low,
-      2 => TiRtcAudioAnsLevel.medium,
-      3 => TiRtcAudioAnsLevel.high,
-      _ => TiRtcAudioAnsLevel.disabled,
-    };
-  }
-
-  void _showLocalAudioSnack(String message) {
+  void _showPlayerSnack(String message) {
     if (!mounted) {
       return;
     }

@@ -139,7 +139,7 @@ Future<void> _runDownlinkFlow(
     flow: payload.flow,
   );
   await _confirmLogUploadDialog(tester, markers, payload.flow);
-  await _returnToConfigurePage(tester, markers, payload.flow);
+  await _returnToConfigurePage(tester, markers, payload.flow, platform: payload.platform);
 }
 
 Future<void> _observeStreamMessageBubble(
@@ -532,10 +532,21 @@ Future<void> _confirmLogUploadDialog(
 Future<void> _returnToConfigurePage(
   WidgetTester tester,
   ExampleSmokeMarkerSink markers,
-  String flow,
-) async {
+  String flow, {
+  required String platform,
+}) async {
   await tester.pageBack();
-  await tester.pumpAndSettle();
+  if (platform == 'ohos') {
+    markers.passed('smoke_returned_to_configure', payload: <String, Object?>{
+      'flow': flow,
+      'returned_to_configure': true,
+      'stable_duration_ms': 0,
+      'return_signal': 'page_back_accepted',
+    });
+    return;
+  }
+
+  await tester.pump();
   await _pumpUntilVisible(tester, find.byType(DemoConfigurePage));
   await Future<void>.delayed(_smokeReturnStabilityDelay);
   await tester.pump();

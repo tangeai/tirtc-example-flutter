@@ -28,6 +28,9 @@ def write_source_summary(
   exit_code: int | None,
   teardown_ok: bool,
   failure_stage: str | None = None,
+  audio_codec: str = "g711a",
+  audio_sample_rate_hz: int = 16000,
+  audio_channels: int = 1,
 ) -> dict[str, Any]:
   source_summary: dict[str, Any] = {
     "schema_version": 1,
@@ -50,9 +53,9 @@ def write_source_summary(
     "failure_stage": failure_stage,
     "profile": {
       "video_codec": "h264",
-      "audio_codec": "g711a",
-      "audio_sample_rate_hz": 8000,
-      "audio_channels": 1,
+      "audio_codec": audio_codec,
+      "audio_sample_rate_hz": audio_sample_rate_hz,
+      "audio_channels": audio_channels,
       "audio_stream_id": 10,
       "video_stream_id": 11,
     },

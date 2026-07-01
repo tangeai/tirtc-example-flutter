@@ -313,20 +313,17 @@ final class DemoDeviceServerController extends ChangeNotifier {
       'local_preview_visible': _localPreviewVisible,
     });
 
+    int? logUploadFailureCode;
     if (markerSink != null) {
       final ({int code, String? logId}) upload = await TiRtcLogging.upload();
       if (upload.code != 0 || upload.logId == null || upload.logId!.isEmpty) {
-        _fail(
-          failureStage: 'log_upload',
-          message: 'log upload failed',
-          errorCode: upload.code,
-        );
-        return upload.code;
+        logUploadFailureCode = upload.code == 0 ? 1 : upload.code;
+      } else {
+        markerSink?.passed('log_upload_completed', payload: <String, Object?>{
+          'log_id': upload.logId,
+          'code': upload.code,
+        });
       }
-      markerSink?.passed('log_upload_completed', payload: <String, Object?>{
-        'log_id': upload.logId,
-        'code': upload.code,
-      });
     }
 
     final int releaseCode = await release(reason: 'automation_teardown');
@@ -353,6 +350,14 @@ final class DemoDeviceServerController extends ChangeNotifier {
     performanceMarkerSink?.passed('perf_teardown_completed', payload: <String, Object?>{
       'returned_to_configure': true,
     });
+    if (logUploadFailureCode != null) {
+      _fail(
+        failureStage: 'log_upload',
+        message: 'log upload failed',
+        errorCode: logUploadFailureCode,
+      );
+      return logUploadFailureCode;
+    }
     return 0;
   }
 

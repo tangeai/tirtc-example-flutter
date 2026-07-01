@@ -31,6 +31,8 @@ final class DemoDownlinkSession {
   final TiRtcVideoInput _videoInput;
   final Set<TiRtcConn> _localAudioConnections = <TiRtcConn>{};
   final Set<TiRtcConn> _localVideoConnections = <TiRtcConn>{};
+  Future<void>? _releaseInFlight;
+  bool _released = false;
   bool _disposed = false;
 
   Widget buildVideoView() {
@@ -46,6 +48,7 @@ final class DemoDownlinkSession {
       throw StateError('connection already bound');
     }
     _connection = connection;
+    _released = false;
   }
 
   void setCommandCallback(TiRtcOnConnCommand? onCommand) {
@@ -112,7 +115,11 @@ final class DemoDownlinkSession {
     if (connection == null) {
       return _tiRtcErrorInvalidArgument;
     }
-    return connection.connect(remoteId: remoteId, token: token);
+    final int code = connection.connect(remoteId: remoteId, token: token);
+    if (code == 0) {
+      _released = false;
+    }
+    return code;
   }
 
   int attachAudio({required int streamId}) {
@@ -412,7 +419,30 @@ final class DemoDownlinkSession {
   }
 
   Future<void> release({required String reason}) async {
+    final Future<void>? releaseInFlight = _releaseInFlight;
+    if (releaseInFlight != null) {
+      TiRtcLogging.i('flutter_example', 'downlink_release_joined reason=$reason');
+      await releaseInFlight;
+      return;
+    }
+    if (_released) {
+      TiRtcLogging.i('flutter_example', 'downlink_release_skipped reason=$reason');
+      return;
+    }
+    _released = true;
     TiRtcLogging.i('flutter_example', 'downlink_release_requested reason=$reason');
+    final Future<void> releaseFuture = _performRelease();
+    _releaseInFlight = releaseFuture;
+    try {
+      await releaseFuture;
+    } finally {
+      if (identical(_releaseInFlight, releaseFuture)) {
+        _releaseInFlight = null;
+      }
+    }
+  }
+
+  Future<void> _performRelease() async {
     _videoOutput?.detach();
     _audioOutput?.detach();
     await detachAndStopLocalInputs();

@@ -29,6 +29,8 @@ from support.summary import base_summary, finish_summary, now_iso, read_json, re
 CASE_DOWNLINK_METRICS = "downlink-metrics-period-summary"
 DEFAULT_AUDIO_STREAM_ID = 10
 DEFAULT_VIDEO_STREAM_ID = 11
+DEFAULT_AUDIO_SAMPLE_RATE_HZ = 16000
+DEFAULT_AUDIO_CHANNELS = 1
 DEFAULT_DURATION_SECONDS = 180
 DEFAULT_WARMUP_SECONDS = 30
 FINAL_SNAPSHOT_PATH = "raw/downlink-metrics-final-snapshot.json"
@@ -141,8 +143,8 @@ def _payload(args: argparse.Namespace, run_id: str) -> dict[str, Any]:
     "video_stream_id": args.video_stream_id,
     "codec": "h264",
     "audio_codec": "g711a",
-    "audio_sample_rate_hz": 8000,
-    "audio_channels": 1,
+    "audio_sample_rate_hz": DEFAULT_AUDIO_SAMPLE_RATE_HZ,
+    "audio_channels": DEFAULT_AUDIO_CHANNELS,
     "encoder_preference": "hardware",
     "video_decoder_preference": 0,
     "buffer_policy": "automatic",
@@ -214,6 +216,10 @@ def _restore_env(previous: dict[str, str | None]) -> None:
       os.environ.pop(key, None)
     else:
       os.environ[key] = value
+
+
+def _child_path_arg(path: Path | str) -> str:
+  return str(Path(path).expanduser().resolve())
 
 
 def _base_case_summary(args: argparse.Namespace, run_id: str, root: Path, mode: str) -> dict[str, Any]:
@@ -342,8 +348,8 @@ def _base_self_test_summary(args: argparse.Namespace, run_id: str, root: Path, m
       "counterpart_profile": {
         "video_codec": "h264",
         "audio_codec": "g711a",
-        "audio_sample_rate_hz": 8000,
-        "audio_channels": 1,
+        "audio_sample_rate_hz": DEFAULT_AUDIO_SAMPLE_RATE_HZ,
+        "audio_channels": DEFAULT_AUDIO_CHANNELS,
         "audio_stream_id": DEFAULT_AUDIO_STREAM_ID,
         "video_stream_id": DEFAULT_VIDEO_STREAM_ID,
       },
@@ -447,8 +453,8 @@ def _run_self_test(args: argparse.Namespace) -> int:
       token_issue,
       source=Path(args.source) if args.source else None,
       audio_codec="g711a",
-      audio_sample_rate_hz=8000,
-      audio_channels=1,
+      audio_sample_rate_hz=DEFAULT_AUDIO_SAMPLE_RATE_HZ,
+      audio_channels=DEFAULT_AUDIO_CHANNELS,
     )
     source_ready = wait_for_bootstrap(root / "source/bootstrap.json", source_process)
     if not source_ready:
@@ -473,6 +479,9 @@ def _run_self_test(args: argparse.Namespace) -> int:
         exit_code=exit_code,
         teardown_ok=teardown_ok,
         failure_stage="source_start",
+        audio_codec="g711a",
+        audio_sample_rate_hz=DEFAULT_AUDIO_SAMPLE_RATE_HZ,
+        audio_channels=DEFAULT_AUDIO_CHANNELS,
       )
       copy_self_test_source_facts(summary, source_summary)
       source_summary_written = True
@@ -489,8 +498,8 @@ def _run_self_test(args: argparse.Namespace) -> int:
       "h264",
       token_issue,
       audio_codec="g711a",
-      audio_sample_rate_hz=8000,
-      audio_channels=1,
+      audio_sample_rate_hz=DEFAULT_AUDIO_SAMPLE_RATE_HZ,
+      audio_channels=DEFAULT_AUDIO_CHANNELS,
     )
     client_root = root / "client"
     child_args = [
@@ -501,7 +510,7 @@ def _run_self_test(args: argparse.Namespace) -> int:
       "--platform",
       args.platform,
       "--artifact-root",
-      str(client_root),
+      _child_path_arg(client_root),
       "--app-id",
       str(bootstrap["app_id"]),
       "--endpoint",
@@ -518,7 +527,7 @@ def _run_self_test(args: argparse.Namespace) -> int:
     if args.platform == "android":
       child_args.extend(["--device-id", str(args.device_id)])
     if args.prepared_state:
-      child_args.extend(["--prepared-state", str(args.prepared_state)])
+      child_args.extend(["--prepared-state", _child_path_arg(args.prepared_state)])
     child_result = subprocess.run(
       child_args,
       cwd=example_root(),
@@ -567,6 +576,9 @@ def _run_self_test(args: argparse.Namespace) -> int:
       exit_code=exit_code,
       teardown_ok=teardown_ok,
       failure_stage=None if teardown_ok else "teardown",
+      audio_codec="g711a",
+      audio_sample_rate_hz=DEFAULT_AUDIO_SAMPLE_RATE_HZ,
+      audio_channels=DEFAULT_AUDIO_CHANNELS,
     )
     copy_self_test_source_facts(summary, source_summary)
     source_summary_written = True
@@ -595,6 +607,9 @@ def _run_self_test(args: argparse.Namespace) -> int:
         exit_code=exit_code,
         teardown_ok=teardown_ok,
         failure_stage=source_failure_stage if source_failure_stage else None if teardown_ok else "teardown",
+        audio_codec="g711a",
+        audio_sample_rate_hz=DEFAULT_AUDIO_SAMPLE_RATE_HZ,
+        audio_channels=DEFAULT_AUDIO_CHANNELS,
       )
       copy_self_test_source_facts(summary, source_summary)
     if env_command_json is None:

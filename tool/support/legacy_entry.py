@@ -40,6 +40,9 @@ def _public_parser(layer: str) -> CaseArgumentParser:
     parser.add_argument("--buffer-policy", default="automatic", choices=("automatic", "no_buffer"))
     parser.add_argument("--audio-case")
     parser.add_argument("--encoder-preference", choices=("software", "hardware"))
+    parser.add_argument("--video-decoder-preference", type=int, default=0, choices=(0, 1, 2))
+    parser.add_argument("--local-video-uplink-cases", action="store_true")
+    parser.add_argument("--source-input-mode", choices=("file", "system"))
   return parser
 
 
@@ -173,6 +176,59 @@ def _smoke_all_flow_evidence(legacy_summary: dict[str, Any], artifact_root: Path
   }
 
 
+def _path_summary_value(root: Path, value: Any) -> str | None:
+  if not isinstance(value, str) or not value:
+    return None
+  path = Path(value)
+  try:
+    return str(path.relative_to(root))
+  except ValueError:
+    return str(path)
+
+
+def _smoke_local_audio_input_evidence(legacy_summary: dict[str, Any]) -> dict[str, Any] | None:
+  if legacy_summary.get("flow") != "downlink_ui" and "local_audio_input_start_count" not in legacy_summary:
+    return None
+  return {
+    "status": "passed" if legacy_summary.get("local_audio_input_ok") is True else "failed",
+    "stream_id": legacy_summary.get("local_audio_input_stream_id"),
+    "start_count": legacy_summary.get("local_audio_input_start_count"),
+    "stop_count": legacy_summary.get("local_audio_input_stop_count"),
+    "attach_count": legacy_summary.get("local_audio_input_attach_count"),
+    "binding_reused": legacy_summary.get("local_audio_input_binding_reused"),
+  }
+
+
+def _smoke_source_received_audio_evidence(
+  legacy_summary: dict[str, Any],
+  artifact_root: Path,
+) -> dict[str, Any] | None:
+  if "source_received_audio_ok" not in legacy_summary:
+    return None
+  source_summary_path = artifact_root / "source/summary.json"
+  source_summary = read_json(source_summary_path) if source_summary_path.is_file() else {}
+  received_audio = legacy_summary.get("source_received_audio")
+  if not isinstance(received_audio, dict):
+    received_audio = (
+      source_summary.get("received_audio")
+      if isinstance(source_summary.get("received_audio"), dict)
+      else {}
+    )
+  media_receive_path = legacy_summary.get("source_media_receive_path") or source_summary.get("media_receive_path")
+  payload_path = legacy_summary.get("source_audio_media_path") or source_summary.get("audio_media_path")
+  return {
+    "status": "passed" if legacy_summary.get("source_received_audio_ok") is True else "failed",
+    "stream_id": received_audio.get("stream_id"),
+    "codec": received_audio.get("codec"),
+    "sample_rate_hz": received_audio.get("sample_rate_hz"),
+    "channels": received_audio.get("channels"),
+    "captured_bytes": received_audio.get("captured_bytes"),
+    "first_output_timing_ms": received_audio.get("first_output_timing_ms"),
+    "media_receive_path": _path_summary_value(artifact_root, media_receive_path),
+    "payload_path": _path_summary_value(artifact_root, payload_path),
+  }
+
+
 def _case_log_ids(artifact_root: Path) -> list[str]:
   result: list[str] = []
   for summary_path in sorted(artifact_root.rglob("cases/*/summary.json")):
@@ -180,11 +236,11 @@ def _case_log_ids(artifact_root: Path) -> list[str]:
       data = read_json(summary_path)
     except (OSError, ValueError):
       return []
-    if summary_path.parent.name.endswith("_failed") and data.get("run_ok") is not True:
+    if data.get("run_ok") is not True:
       continue
     log_id = data.get("log_id")
     if not isinstance(log_id, str) or not log_id:
-      return []
+      continue
     result.append(log_id)
   return result
 
@@ -198,6 +254,18 @@ def _integration_log_id(legacy_summary: dict[str, Any], artifact_root: Path) -> 
     log_ids = [item.get("log_id") for item in scenario_results.values() if isinstance(item, dict)]
     if log_ids and all(isinstance(item, str) and item for item in log_ids):
       return ",".join(log_ids)
+  uplink_cell_results = legacy_summary.get("uplink_cell_results")
+  if isinstance(uplink_cell_results, list):
+    log_ids = [
+      item.get("log_id")
+      for item in uplink_cell_results
+      if isinstance(item, dict)
+      and item.get("status") == "passed"
+      and isinstance(item.get("log_id"), str)
+      and item.get("log_id")
+    ]
+    if log_ids:
+      return ",".join(log_ids)
   case_log_ids = _case_log_ids(artifact_root)
   if case_log_ids:
     return ",".join(case_log_ids)
@@ -210,7 +278,7 @@ def _layer_evidence(layer: str, legacy_summary: dict[str, Any], mode: str, *, ar
     markers_path = artifact_root / "flutter/markers.jsonl"
     observed = list(legacy_summary.get("observed_markers") or []) or all_flow.get("observed_markers") or _marker_names(markers_path)
     log_id = legacy_summary.get("log_id") or all_flow.get("log_id")
-    return {
+    evidence = {
       "ui_flow": {
         "name": legacy_summary.get("flow") or "downlink_ui",
         "status": "passed" if legacy_summary.get("ui_ok") is True else "failed",
@@ -233,6 +301,13 @@ def _layer_evidence(layer: str, legacy_summary: dict[str, Any], mode: str, *, ar
       or _relative_existing(artifact_root, artifact_root / "source/summary.json")
       or _relative_existing(artifact_root, artifact_root / "client/summary.json"),
     }
+    local_audio_input = _smoke_local_audio_input_evidence(legacy_summary)
+    if local_audio_input is not None:
+      evidence["local_audio_input_slice"] = local_audio_input
+    source_received_audio = _smoke_source_received_audio_evidence(legacy_summary, artifact_root)
+    if source_received_audio is not None:
+      evidence["source_received_audio"] = source_received_audio
+    return evidence
   log_id = _integration_log_id(legacy_summary, artifact_root)
   return {
     "scenario_results": list((legacy_summary.get("scenario_results") or {}).values())
@@ -240,6 +315,7 @@ def _layer_evidence(layer: str, legacy_summary: dict[str, Any], mode: str, *, ar
     else list(legacy_summary.get("scenario_results") or []),
     "codec_results": list(legacy_summary.get("codec_results") or []),
     "audio_case_results": list(legacy_summary.get("audio_case_results") or []),
+    "local_video_uplink_results": list(legacy_summary.get("uplink_cell_results") or []),
     "markers_path": legacy_summary.get("markers_path") or "flutter/markers.jsonl",
     "required_markers": list(legacy_summary.get("required_markers") or []),
     "counterpart_summary_path": legacy_summary.get("counterpart_summary_path"),

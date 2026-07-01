@@ -210,9 +210,9 @@ import UIKit
   }
 
   private func requestCaptureAccessIfNeeded(for mediaType: AVMediaType, result: @escaping FlutterResult) {
-    requestCaptureAccessIfNeeded(for: mediaType) { granted in
+    requestCaptureAccessIfNeeded(for: mediaType, completion: { granted in
       result(granted)
-    }
+    })
   }
 
   private func requestCaptureAccessIfNeeded(

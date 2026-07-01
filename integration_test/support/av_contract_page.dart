@@ -21,7 +21,9 @@ import 'package:tirtc_av_kit_example/src/widgets/downlink_metrics_overlay_marker
 import 'package:tirtc_av_kit_example/src/widgets/downlink_metrics_overlay_model.dart';
 import 'package:tirtc_av_kit_example/src/widgets/player_page_widgets.dart';
 import 'av_contract_command_probe.dart';
+import 'av_contract_local_audio_probe.dart';
 import 'av_contract_marker_sink.dart';
+import 'av_contract_metrics_snapshot.dart';
 import 'av_contract_payload.dart';
 
 final class _ScenarioMarkerSink implements DemoAutomationMarkerSink {
@@ -335,6 +337,9 @@ class _AutomationPageState extends State<AutomationPage> {
         'buffer_policy_ok': true,
       },
     );
+    if (!await _startAndroidTalkbackAudioIfNeeded(settings)) {
+      return;
+    }
     if (!await _runCommandProbe()) {
       return;
     }
@@ -348,20 +353,27 @@ class _AutomationPageState extends State<AutomationPage> {
     final DownlinkMetricsOverlayModel? finalDebugStats = _session!.readMetricsOverlay(
       requestedDecoderPreference: settings.videoDecoderPreference,
     );
+    final DownlinkMetricsOverlayModel? markerStats = _lastAvStatsOverlay ?? finalDebugStats;
+    final bool videoOutputHealthy = _session!.videoState == TiRtcVideoOutputState.rendering ||
+        (payload.scenario == AutomationPayload.scenarioCliDeviceToFlutterClient &&
+            _session!.videoState == TiRtcVideoOutputState.buffering &&
+            _renderSize != null);
     if (_audioErrorCount != 0 ||
         _videoErrorCount != 0 ||
         !_isHealthyAudioState(_session!.audioState) ||
-        _session!.videoState != TiRtcVideoOutputState.rendering ||
-        finalDebugStats == null ||
-        !finalDebugStats.debugStatsReady) {
+        !videoOutputHealthy ||
+        markerStats == null ||
+        !markerStats.debugStatsReady) {
       _fail(
         failureStage: 'render_window',
         message: 'render window ended with unhealthy output state',
       );
       return;
     }
-    final DownlinkMetricsOverlayModel markerStats = _lastAvStatsOverlay ?? finalDebugStats;
-    _markerSink.passed('final_metrics_snapshot', payload: _finalMetricsSnapshotPayload(payload, finalDebugStats));
+    _markerSink.passed(
+      'final_metrics_snapshot',
+      payload: avContractFinalMetricsSnapshotPayload(payload: payload, metrics: markerStats),
+    );
     _markerSink.passed('render_window_completed', payload: <String, Object?>{
       'audio_error_count': _audioErrorCount,
       'video_error_count': _videoErrorCount,
@@ -373,35 +385,36 @@ class _AutomationPageState extends State<AutomationPage> {
       ...markerStats.debugMarkerPayload(sessionGeneration: _automationSessionGeneration),
     });
 
+    int? logUploadFailureCode;
     final ({int code, String? logId}) upload = await TiRtcLogging.upload();
     if (upload.code != 0 || upload.logId == null || upload.logId!.isEmpty) {
-      _fail(
-        failureStage: 'log_upload',
-        message: 'log upload failed',
-        errorCode: upload.code,
-      );
-      return;
+      logUploadFailureCode = upload.code == 0 ? 1 : upload.code;
+    } else {
+      _markerSink.passed('log_upload_completed', payload: <String, Object?>{
+        'log_id': upload.logId,
+        'code': upload.code,
+      });
     }
-    _markerSink.passed('log_upload_completed', payload: <String, Object?>{
-      'log_id': upload.logId,
-      'code': upload.code,
-    });
 
-    _clearCallbacks();
-    await _releaseAutomationResources(reason: 'automation_teardown');
-    await _disposeSessionAsync();
-    final int shutdownCode = await _shutdownRuntimeAfterDisposal();
-    if (shutdownCode != 0) {
-      _fail(
+    final int teardownCode = await _runAutomationTeardown();
+    if (teardownCode != 0) {
+      _markFailure(
         failureStage: 'teardown',
         message: 'runtime shutdown failed',
-        errorCode: shutdownCode,
+        errorCode: teardownCode,
       );
+      _finish();
       return;
     }
-    _markerSink.passed('teardown_completed', payload: <String, Object?>{
-      'returned_to_configure': true,
-    });
+    if (logUploadFailureCode != null) {
+      _markFailure(
+        failureStage: 'log_upload',
+        message: 'log upload failed',
+        errorCode: logUploadFailureCode,
+      );
+      _finish();
+      return;
+    }
     _finish();
   }
 
@@ -442,29 +455,6 @@ class _AutomationPageState extends State<AutomationPage> {
     return true;
   }
 
-  Map<String, Object?> _finalMetricsSnapshotPayload(
-    AutomationPayload payload,
-    DownlinkMetricsOverlayModel metrics,
-  ) {
-    final int warmupSeconds = payload.metricsSessionResetAfterSeconds ?? 0;
-    return <String, Object?>{
-      'schema_version': 1,
-      'run_id': payload.runId,
-      'timestamp': DateTime.now().toUtc().toIso8601String(),
-      'elapsed_ms': payload.renderWindowSeconds * 1000,
-      'source': 'ui_text_final_snapshot',
-      'platform': Platform.operatingSystem,
-      'measurement': <String, Object?>{
-        'warmup_seconds': warmupSeconds,
-        'duration_seconds': payload.renderWindowSeconds,
-        'measurement_duration_seconds': payload.renderWindowSeconds - warmupSeconds,
-        'final_snapshot_elapsed_ms': payload.renderWindowSeconds * 1000,
-      },
-      'rows': metrics.snapshotRowsPayload(),
-      'period_summary': metrics.periodSummaryPayload(),
-    };
-  }
-
   TiRtcOutputBufferStrategy _outputBufferStrategy(DemoExampleSettings settings) {
     return settings.outputBufferPolicy == DemoExampleSettings.outputBufferPolicyNoBuffer
         ? TiRtcOutputBufferStrategy.noBuffer
@@ -476,6 +466,25 @@ class _AutomationPageState extends State<AutomationPage> {
       TiRtcOutputBufferStrategy.noBuffer => 'NO_BUFFER',
       TiRtcOutputBufferStrategy.automatic => 'AUTOMATIC',
     };
+  }
+
+  Future<bool> _startAndroidTalkbackAudioIfNeeded(DemoExampleSettings settings) async {
+    final AvContractLocalAudioProbeResult result = await startAvContractLocalAudioProbe(
+      session: _session,
+      settings: settings,
+    );
+    if (!result.ok) {
+      _fail(
+        failureStage: result.failureStage ?? 'local_audio_start',
+        message: result.message ?? 'local audio input failed',
+        errorCode: result.errorCode,
+      );
+      return false;
+    }
+    for (final AvContractLocalAudioProbeMarker marker in result.markers) {
+      _markerSink.passed(marker.name, payload: marker.payload);
+    }
+    return true;
   }
 
   Future<void> _runFlutterDeviceServerToCliClient(
@@ -752,15 +761,9 @@ class _AutomationPageState extends State<AutomationPage> {
     required String message,
     int? errorCode,
   }) {
-    if (_terminal) {
+    if (!_markFailure(failureStage: failureStage, message: message, errorCode: errorCode)) {
       return;
     }
-    _terminal = true;
-    _markerSink.failure(
-      failureStage: failureStage,
-      message: message,
-      errorCode: errorCode,
-    );
     _stopMetricsPolling();
     _clearCallbacks();
     unawaited(
@@ -769,6 +772,23 @@ class _AutomationPageState extends State<AutomationPage> {
           .whenComplete(_shutdownRuntimeAfterDisposal),
     );
     _finish();
+  }
+
+  bool _markFailure({
+    required String failureStage,
+    required String message,
+    int? errorCode,
+  }) {
+    if (_terminal) {
+      return false;
+    }
+    _terminal = true;
+    _markerSink.failure(
+      failureStage: failureStage,
+      message: message,
+      errorCode: errorCode,
+    );
+    return true;
   }
 
   void _finish() {
@@ -798,6 +818,21 @@ class _AutomationPageState extends State<AutomationPage> {
       await _session?.release(reason: reason);
     }
     _audioSession.releaseIfNeeded(reason: reason);
+  }
+
+  Future<int> _runAutomationTeardown() async {
+    _clearCallbacks();
+    await _releaseAutomationResources(reason: 'automation_teardown');
+    await _disposeSessionAsync();
+    final int shutdownCode = await _shutdownRuntimeAfterDisposal();
+    if (shutdownCode != 0) {
+      return shutdownCode;
+    }
+    _finish();
+    _markerSink.passed('teardown_completed', payload: <String, Object?>{
+      'returned_to_configure': true,
+    });
+    return 0;
   }
 
   Future<int> _releaseServerRoleResources({required String reason}) async {

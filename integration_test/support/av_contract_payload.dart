@@ -10,6 +10,14 @@ const String automationRunIdDefine = String.fromEnvironment(
 const String automationPayloadDefine = String.fromEnvironment(
   'TIRTC_AV_INTEGRATION_PAYLOAD_B64URL',
 );
+const Set<String> _supportedDownlinkAudioCodecs = <String>{
+  'g711a',
+  'aac',
+  'pcm',
+  'opus',
+  'amr',
+};
+const Set<int> _supportedDownlinkAudioChannels = <int>{1, 2};
 
 final class AutomationPayloadParseResult {
   const AutomationPayloadParseResult._({
@@ -267,17 +275,35 @@ final class AutomationPayload {
     if (payload['audio_codec'] is! String) {
       return 'audio_codec must be a string';
     }
-    final DemoDeviceAudioCodec? audioCodec = DemoDeviceAudioCodec.tryParse(payload['audio_codec']! as String);
-    if (audioCodec == null) {
-      return 'audio_codec must be pcm, g711a, aac, opus, or amr';
-    }
+    final String audioCodec = payload['audio_codec']! as String;
     if (payload['audio_sample_rate_hz'] is! int ||
         DemoDeviceAudioSampleRate.tryParseHertz(payload['audio_sample_rate_hz']! as int) == null) {
       return 'audio_sample_rate_hz must be 8000 or 16000';
     }
-    if (payload['audio_channels'] is! int ||
-        DemoDeviceAudioChannelCount.tryParseCount(payload['audio_channels']! as int) == null) {
-      return 'audio_channels must be 1 or 2';
+    final int audioSampleRateHz = payload['audio_sample_rate_hz']! as int;
+    if (payload['audio_channels'] is! int) {
+      return scenario == AutomationPayload.scenarioCliDeviceToFlutterClient
+          ? 'audio_channels must be 1 or 2'
+          : 'audio_channels must be 1';
+    }
+    final int audioChannels = payload['audio_channels']! as int;
+    if (scenario == AutomationPayload.scenarioCliDeviceToFlutterClient) {
+      if (!_supportedDownlinkAudioCodecs.contains(audioCodec)) {
+        return 'audio_codec must be pcm, g711a, aac, opus, or amr';
+      }
+      if (!_supportedDownlinkAudioChannels.contains(audioChannels)) {
+        return 'audio_channels must be 1 or 2';
+      }
+      if (audioCodec == 'amr' && (audioSampleRateHz != 8000 || audioChannels != 1)) {
+        return 'amr audio must be 8000 Hz mono';
+      }
+    } else {
+      if (DemoDeviceAudioCodec.tryParse(audioCodec) == null) {
+        return 'audio_codec must be g711a, aac, or pcm for device server audio input';
+      }
+      if (DemoDeviceAudioChannelCount.tryParseCount(audioChannels) == null) {
+        return 'audio_channels must be 1';
+      }
     }
     final String codecValue = payload['codec']! as String;
     if (scenario == AutomationPayload.scenarioFlutterDeviceServerToCliClient) {

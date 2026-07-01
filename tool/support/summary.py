@@ -714,16 +714,39 @@ def _all_results_passed(value: object) -> bool:
   return isinstance(value, list) and bool(value) and all(isinstance(item, dict) and item.get("status") == "passed" for item in value)
 
 
+def _local_video_uplink_results_passed(value: object) -> bool:
+  if not _all_results_passed(value):
+    return False
+  if not isinstance(value, list):
+    return False
+  for item in value:
+    if not isinstance(item, dict):
+      return False
+    summary_path = item.get("summary_path")
+    if not isinstance(summary_path, str) or not summary_path:
+      return False
+    if item.get("expect") == "unsupported" and item.get("actual_error_code") != item.get("expected_error_code"):
+      return False
+  return True
+
+
 def _validate_integration_pass(evidence: dict[str, Any]) -> bool:
   counterpart_summary_path = evidence.get("counterpart_summary_path")
   audio_results = evidence.get("audio_case_results")
   codec_results_passed = _all_results_passed(evidence.get("codec_results"))
   scenario_results_passed = _all_results_passed(evidence.get("scenario_results"))
+  local_video_uplink_passed = _local_video_uplink_results_passed(evidence.get("local_video_uplink_results"))
   audio_evidence_paths_ok = (
     isinstance(audio_results, list)
     and bool(audio_results)
     and all(isinstance(item, dict) and isinstance(item.get("evidence_path"), str) and bool(item.get("evidence_path")) for item in audio_results)
   )
+  if local_video_uplink_passed:
+    return (
+      evidence.get("av_contract_ok") is True
+      and evidence.get("teardown_ok") is True
+      and _log_upload_passed(evidence)
+    )
   return (
     (scenario_results_passed or codec_results_passed)
     and _all_results_passed(audio_results)

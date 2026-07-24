@@ -258,7 +258,7 @@ class _DemoQrScannerPayloadPageState<T extends Object> extends State<DemoQrScann
         ..hideCurrentSnackBar()
         ..showSnackBar(
           const SnackBar(
-            content: Text('二维码内容无效，请检查必填字段与字段格式。'),
+            content: Text('二维码内容无效，请使用包含 app_id、remote_id、token 的 JSON，或 v1.xxx 纯 Token。'),
           ),
         );
       await Future<void>.delayed(const Duration(milliseconds: 900));

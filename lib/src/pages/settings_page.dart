@@ -1,12 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:tirtc_av_kit/tirtc_av_kit.dart';
+import 'package:tirtc_flutter/tirtc_flutter.dart';
 
 import '../app_theme.dart';
 import '../demo_configuration.dart';
 import '../settings/demo_example_settings_store.dart';
-import '../settings/device_server_configuration_store.dart';
 import '../widgets/settings_page_widgets.dart';
 
 class DemoSettingsPage extends StatefulWidget {
@@ -14,12 +13,10 @@ class DemoSettingsPage extends StatefulWidget {
     super.key,
     required this.initialSettings,
     this.settingsStore = const DemoExampleSettingsStore(),
-    this.deviceSettingsStore = const DemoDeviceServerConfigurationStore(),
   });
 
   final DemoExampleSettings initialSettings;
   final DemoExampleSettingsStore settingsStore;
-  final DemoDeviceServerConfigurationStore deviceSettingsStore;
 
   @override
   State<DemoSettingsPage> createState() => _DemoSettingsPageState();
@@ -27,17 +24,7 @@ class DemoSettingsPage extends StatefulWidget {
 
 class _DemoSettingsPageState extends State<DemoSettingsPage> {
   late DemoExampleSettings _settings = widget.initialSettings;
-  DemoDeviceCameraFacing _deviceCameraFacing = DemoDeviceCameraFacing.back;
-  DemoDeviceVideoCodec _deviceVideoCodec = DemoDeviceVideoCodec.h264;
-  DemoDeviceEncoderPreference _deviceEncoderPreference = DemoDeviceEncoderPreference.hardware;
   bool _saving = false;
-  bool _devicePreferencesLoaded = false;
-
-  @override
-  void initState() {
-    super.initState();
-    unawaited(_loadDevicePreferences());
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -192,61 +179,6 @@ class _DemoSettingsPageState extends State<DemoSettingsPage> {
                 ),
               ),
               const SizedBox(height: 20),
-              const SettingsSectionTitle(label: '设备端'),
-              SettingsSurface(
-                child: Column(
-                  children: <Widget>[
-                    ListTile(
-                      enabled: !_saving && _devicePreferencesLoaded,
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 16),
-                      title: const Text('摄像头'),
-                      subtitle: Text(_deviceCameraFacingLabel(_deviceCameraFacing)),
-                      trailing: const Icon(
-                        Icons.chevron_right_rounded,
-                        color: ExampleTheme.textSecondary,
-                      ),
-                      onTap: _saving || !_devicePreferencesLoaded
-                          ? null
-                          : () {
-                              unawaited(_chooseDeviceCameraFacing());
-                            },
-                    ),
-                    const Divider(height: 1, indent: 16, endIndent: 16, color: ExampleTheme.inputBorder),
-                    ListTile(
-                      enabled: !_saving && _devicePreferencesLoaded,
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 16),
-                      title: const Text('编码格式'),
-                      subtitle: Text(_deviceVideoCodecLabel(_deviceVideoCodec)),
-                      trailing: const Icon(
-                        Icons.chevron_right_rounded,
-                        color: ExampleTheme.textSecondary,
-                      ),
-                      onTap: _saving || !_devicePreferencesLoaded
-                          ? null
-                          : () {
-                              unawaited(_chooseDeviceVideoCodec());
-                            },
-                    ),
-                    const Divider(height: 1, indent: 16, endIndent: 16, color: ExampleTheme.inputBorder),
-                    ListTile(
-                      enabled: !_saving && _devicePreferencesLoaded && _deviceVideoCodec == DemoDeviceVideoCodec.h264,
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 16),
-                      title: const Text('编码模式'),
-                      subtitle: Text(_deviceEncoderPreferenceSubtitle()),
-                      trailing: const Icon(
-                        Icons.chevron_right_rounded,
-                        color: ExampleTheme.textSecondary,
-                      ),
-                      onTap: _saving || !_devicePreferencesLoaded || _deviceVideoCodec != DemoDeviceVideoCodec.h264
-                          ? null
-                          : () {
-                              unawaited(_chooseDeviceEncoderPreference());
-                            },
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 20),
               const SettingsSectionTitle(label: '通用'),
               SettingsSurface(
                 child: SwitchListTile(
@@ -267,19 +199,6 @@ class _DemoSettingsPageState extends State<DemoSettingsPage> {
         ),
       ),
     );
-  }
-
-  Future<void> _loadDevicePreferences() async {
-    final DemoDeviceServerConfigurationSnapshot snapshot = await widget.deviceSettingsStore.load();
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      _deviceCameraFacing = snapshot.cameraFacing;
-      _deviceVideoCodec = snapshot.videoCodec;
-      _deviceEncoderPreference = snapshot.encoderPreference;
-      _devicePreferencesLoaded = true;
-    });
   }
 
   Future<void> _setVideoDecoderPreference(int? value) async {
@@ -390,6 +309,14 @@ class _DemoSettingsPageState extends State<DemoSettingsPage> {
               value: DemoExampleSettings.localAudioCodecPcm,
               label: 'PCM',
             ),
+            PreferenceOption<String>(
+              value: DemoExampleSettings.localAudioCodecOpus,
+              label: 'OPUS',
+            ),
+            PreferenceOption<String>(
+              value: DemoExampleSettings.localAudioCodecAmr,
+              label: 'AMR',
+            ),
           ],
         );
       },
@@ -398,7 +325,12 @@ class _DemoSettingsPageState extends State<DemoSettingsPage> {
       return;
     }
     await _saveSettings(
-      _settings.copyWith(localAudioCodec: value),
+      _settings.copyWith(
+        localAudioCodec: value,
+        localAudioSampleRateHz: value == DemoExampleSettings.localAudioCodecAmr
+            ? DemoExampleSettings.localAudioSampleRate8k
+            : _settings.localAudioSampleRateHz,
+      ),
       reason: 'local_audio_codec',
     );
   }
@@ -429,7 +361,11 @@ class _DemoSettingsPageState extends State<DemoSettingsPage> {
       return;
     }
     await _saveSettings(
-      _settings.copyWith(localAudioSampleRateHz: value),
+      _settings.copyWith(
+        localAudioSampleRateHz: _settings.localAudioCodec == DemoExampleSettings.localAudioCodecAmr
+            ? DemoExampleSettings.localAudioSampleRate8k
+            : value,
+      ),
       reason: 'local_audio_sample_rate',
     );
   }
@@ -539,90 +475,6 @@ class _DemoSettingsPageState extends State<DemoSettingsPage> {
     );
   }
 
-  Future<void> _chooseDeviceCameraFacing() async {
-    final DemoDeviceCameraFacing? value = await showModalBottomSheet<DemoDeviceCameraFacing>(
-      context: context,
-      showDragHandle: true,
-      backgroundColor: ExampleTheme.background,
-      builder: (BuildContext context) {
-        return PreferenceSheet<DemoDeviceCameraFacing>(
-          title: '摄像头',
-          currentValue: _deviceCameraFacing,
-          options: const <PreferenceOption<DemoDeviceCameraFacing>>[
-            PreferenceOption<DemoDeviceCameraFacing>(
-              value: DemoDeviceCameraFacing.front,
-              label: '前置',
-            ),
-            PreferenceOption<DemoDeviceCameraFacing>(
-              value: DemoDeviceCameraFacing.back,
-              label: '后置',
-            ),
-          ],
-        );
-      },
-    );
-    if (!mounted || value == null) {
-      return;
-    }
-    await _saveDevicePreferences(cameraFacing: value, reason: 'device_camera_facing');
-  }
-
-  Future<void> _chooseDeviceVideoCodec() async {
-    final DemoDeviceVideoCodec? value = await showModalBottomSheet<DemoDeviceVideoCodec>(
-      context: context,
-      showDragHandle: true,
-      backgroundColor: ExampleTheme.background,
-      builder: (BuildContext context) {
-        return PreferenceSheet<DemoDeviceVideoCodec>(
-          title: '编码格式',
-          currentValue: _deviceVideoCodec,
-          options: const <PreferenceOption<DemoDeviceVideoCodec>>[
-            PreferenceOption<DemoDeviceVideoCodec>(
-              value: DemoDeviceVideoCodec.h264,
-              label: 'H264',
-            ),
-            PreferenceOption<DemoDeviceVideoCodec>(
-              value: DemoDeviceVideoCodec.mjpeg,
-              label: 'MJPEG',
-            ),
-          ],
-        );
-      },
-    );
-    if (!mounted || value == null) {
-      return;
-    }
-    await _saveDevicePreferences(videoCodec: value, reason: 'device_video_codec');
-  }
-
-  Future<void> _chooseDeviceEncoderPreference() async {
-    final DemoDeviceEncoderPreference? value = await showModalBottomSheet<DemoDeviceEncoderPreference>(
-      context: context,
-      showDragHandle: true,
-      backgroundColor: ExampleTheme.background,
-      builder: (BuildContext context) {
-        return PreferenceSheet<DemoDeviceEncoderPreference>(
-          title: '编码模式',
-          currentValue: _deviceEncoderPreference,
-          options: const <PreferenceOption<DemoDeviceEncoderPreference>>[
-            PreferenceOption<DemoDeviceEncoderPreference>(
-              value: DemoDeviceEncoderPreference.software,
-              label: '软编',
-            ),
-            PreferenceOption<DemoDeviceEncoderPreference>(
-              value: DemoDeviceEncoderPreference.hardware,
-              label: '硬编',
-            ),
-          ],
-        );
-      },
-    );
-    if (!mounted || value == null) {
-      return;
-    }
-    await _saveDevicePreferences(encoderPreference: value, reason: 'device_encoder_preference');
-  }
-
   Future<void> _saveSettings(
     DemoExampleSettings nextSettings, {
     required String reason,
@@ -670,101 +522,5 @@ class _DemoSettingsPageState extends State<DemoSettingsPage> {
         ..hideCurrentSnackBar()
         ..showSnackBar(const SnackBar(content: Text('设置保存失败。')));
     }
-  }
-
-  Future<void> _saveDevicePreferences({
-    DemoDeviceCameraFacing? cameraFacing,
-    DemoDeviceVideoCodec? videoCodec,
-    DemoDeviceEncoderPreference? encoderPreference,
-    required String reason,
-  }) async {
-    final DemoDeviceCameraFacing previousCameraFacing = _deviceCameraFacing;
-    final DemoDeviceVideoCodec previousVideoCodec = _deviceVideoCodec;
-    final DemoDeviceEncoderPreference previousEncoderPreference = _deviceEncoderPreference;
-    final DemoDeviceCameraFacing nextCameraFacing = cameraFacing ?? _deviceCameraFacing;
-    final DemoDeviceVideoCodec nextVideoCodec = videoCodec ?? _deviceVideoCodec;
-    final DemoDeviceEncoderPreference nextEncoderPreference = nextVideoCodec == DemoDeviceVideoCodec.mjpeg
-        ? DemoDeviceEncoderPreference.software
-        : encoderPreference ?? _deviceEncoderPreference;
-    if (nextCameraFacing == previousCameraFacing &&
-        nextVideoCodec == previousVideoCodec &&
-        nextEncoderPreference == previousEncoderPreference) {
-      return;
-    }
-
-    setState(() {
-      _deviceCameraFacing = nextCameraFacing;
-      _deviceVideoCodec = nextVideoCodec;
-      _deviceEncoderPreference = nextEncoderPreference;
-      _saving = true;
-    });
-
-    try {
-      await widget.deviceSettingsStore.saveDevicePreferences(
-        cameraFacing: nextCameraFacing,
-        videoCodec: nextVideoCodec,
-        encoderPreference: nextEncoderPreference,
-      );
-      TiRtcLogging.i(
-        'flutter_example',
-        'device_preferences_saved reason=$reason '
-            'camera_facing=${nextCameraFacing.name} '
-            'video_codec=${nextVideoCodec.name} '
-            'encoder_preference=${nextEncoderPreference.name}',
-      );
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _saving = false;
-      });
-    } on Object catch (error) {
-      TiRtcLogging.w(
-        'flutter_example',
-        'device_preferences_save_failed reason=$reason error=$error',
-      );
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _deviceCameraFacing = previousCameraFacing;
-        _deviceVideoCodec = previousVideoCodec;
-        _deviceEncoderPreference = previousEncoderPreference;
-        _saving = false;
-      });
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(const SnackBar(content: Text('设备端设置保存失败。')));
-    }
-  }
-
-  String _deviceCameraFacingLabel(DemoDeviceCameraFacing value) {
-    return switch (value) {
-      DemoDeviceCameraFacing.front => '前置',
-      DemoDeviceCameraFacing.back => '后置',
-    };
-  }
-
-  String _deviceVideoCodecLabel(DemoDeviceVideoCodec value) {
-    return switch (value) {
-      DemoDeviceVideoCodec.h264 => 'H264',
-      DemoDeviceVideoCodec.h265 => 'H265',
-      DemoDeviceVideoCodec.mjpeg => 'MJPEG',
-    };
-  }
-
-  String _deviceEncoderPreferenceLabel(DemoDeviceEncoderPreference value) {
-    return switch (value) {
-      DemoDeviceEncoderPreference.software => '软编',
-      DemoDeviceEncoderPreference.hardware => '硬编',
-    };
-  }
-
-  String _deviceEncoderPreferenceSubtitle() {
-    final String label = _deviceEncoderPreferenceLabel(_deviceEncoderPreference);
-    if (_deviceVideoCodec == DemoDeviceVideoCodec.mjpeg) {
-      return '$label（MJPEG 仅支持软编）';
-    }
-    return label;
   }
 }

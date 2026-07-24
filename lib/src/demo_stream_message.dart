@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
-import 'package:tirtc_av_kit/tirtc_av_kit.dart';
+import 'package:tirtc_flutter/tirtc_flutter.dart';
 
 const Duration demoStreamMessagePeriod = Duration(seconds: 10);
 const Duration demoStreamMessageBubbleDuration = Duration(seconds: 4);

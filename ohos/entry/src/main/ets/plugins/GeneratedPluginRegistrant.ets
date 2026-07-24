@@ -1,6 +1,6 @@
 import { FlutterEngine, Log } from '@ohos/flutter_ohos';
 import IntegrationTestPlugin from 'integration_test';
-import TirtcAvKitPlugin from 'tirtc_av_kit';
+import TiRtcPlugin from 'tirtc_flutter';
 
 /**
  * Generated file. Do not edit.
@@ -15,7 +15,7 @@ export class GeneratedPluginRegistrant {
   static registerWith(flutterEngine: FlutterEngine) {
     try {
       flutterEngine.getPlugins()?.add(new IntegrationTestPlugin());
-      flutterEngine.getPlugins()?.add(new TirtcAvKitPlugin());
+      flutterEngine.getPlugins()?.add(new TiRtcPlugin());
     } catch (e) {
       Log.e(
         TAG,

@@ -1,17 +1,16 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:tirtc_av_kit/tirtc_av_kit.dart' show TiRtcAudioOutput, TiRtcVideoOutput;
-import 'package:tirtc_av_kit/src/internal/native_api.dart';
-import 'package:tirtc_av_kit/src/internal/runtime_bridge.dart';
-import 'package:tirtc_av_kit/src/public/output_buffer_strategy.dart';
+import 'package:tirtc_flutter/tirtc_flutter.dart' show TiRtcAudioOutput, TiRtcVideoOutput;
+import 'package:tirtc_flutter/src/internal/native_api.dart';
+import 'package:tirtc_flutter/src/internal/runtime_bridge.dart';
+import 'package:tirtc_flutter/src/public/output_buffer_strategy.dart';
 
 TiRtcAudioOutputOptionsValue _audioOptions(
   TiRtcOutputBufferStrategy strategy,
   int? maxWatermarkMs,
 ) {
   return TiRtcAudioOutputOptionsValue(
-    volumePercent: 100,
     agcLevel: 0,
     ansLevel: 0,
     bufferStrategy: strategy,

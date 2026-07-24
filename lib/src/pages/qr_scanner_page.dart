@@ -9,8 +9,8 @@ class DemoQrScannerPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DemoQrScannerPayloadPage<DemoScanPayload>(
-      leadText: '将 TiRTC DevTools CLI 生成的二维码完整放入方框内，系统会自动填充一次性连接 Token。',
-      guideText: '二维码可以是包含 app_id、remote_id、token 和可选 endpoint 的 JSON，也可以是纯 v1 Token。',
+      leadText: '对准 TiRTC 或 DevTools 生成的 JSON 二维码，或 v1.xxx 开头的纯 Token 二维码。',
+      guideText: 'JSON 会填充 app_id、remote_id、token 和可选 endpoint；纯 Token 只会填充 Token，其他字段继续使用首页输入。',
       samplePayloadText: '{\n'
           '  "app_id": "flutter-example-app",\n'
           '  "remote_id": "TESTTIRTC01",\n'

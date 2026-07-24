@@ -1,6 +1,5 @@
-import 'package:tirtc_av_kit/tirtc_av_kit.dart';
+import 'package:tirtc_flutter/tirtc_flutter.dart';
 
-import '../demo_configuration.dart';
 import 'example_preferences.dart';
 
 final class DemoDownlinkConfigurationSnapshot {
@@ -10,7 +9,6 @@ final class DemoDownlinkConfigurationSnapshot {
     this.remoteId = '',
     this.audioStreamId = '',
     this.videoStreamId = '',
-    this.tokenIssuerBaseUrl = '',
   });
 
   final String appId;
@@ -18,7 +16,6 @@ final class DemoDownlinkConfigurationSnapshot {
   final String remoteId;
   final String audioStreamId;
   final String videoStreamId;
-  final String tokenIssuerBaseUrl;
 }
 
 final class DemoDownlinkConfigurationStore {
@@ -26,13 +23,11 @@ final class DemoDownlinkConfigurationStore {
     this.preferences = const MethodChannelDemoExamplePreferences(),
   });
 
-  static const String appIdKey = 'tirtc_av_kit_example.downlink.app_id';
-  static const String endpointKey = 'tirtc_av_kit_example.downlink.endpoint';
-  static const String remoteIdKey = 'tirtc_av_kit_example.downlink.remote_id';
-  static const String audioStreamIdKey = 'tirtc_av_kit_example.downlink.audio_stream_id';
-  static const String videoStreamIdKey = 'tirtc_av_kit_example.downlink.video_stream_id';
-  static const String tokenIssuerBaseUrlKey = 'tirtc_av_kit_example.downlink.token_issuer_base_url';
-  static const String legacyTokenIssuerUrlKey = 'tirtc_av_kit_example.downlink.token_issuer_url';
+  static const String appIdKey = 'tirtc_example.downlink.app_id';
+  static const String endpointKey = 'tirtc_example.downlink.endpoint';
+  static const String remoteIdKey = 'tirtc_example.downlink.remote_id';
+  static const String audioStreamIdKey = 'tirtc_example.downlink.audio_stream_id';
+  static const String videoStreamIdKey = 'tirtc_example.downlink.video_stream_id';
 
   final DemoExamplePreferences preferences;
 
@@ -43,7 +38,6 @@ final class DemoDownlinkConfigurationStore {
       remoteId: await _readString(remoteIdKey),
       audioStreamId: await _readString(audioStreamIdKey),
       videoStreamId: await _readString(videoStreamIdKey),
-      tokenIssuerBaseUrl: await _readTokenIssuerBaseUrl(),
     );
   }
 
@@ -53,7 +47,6 @@ final class DemoDownlinkConfigurationStore {
     await preferences.putString(key: remoteIdKey, value: snapshot.remoteId);
     await preferences.putString(key: audioStreamIdKey, value: snapshot.audioStreamId);
     await preferences.putString(key: videoStreamIdKey, value: snapshot.videoStreamId);
-    await preferences.putString(key: tokenIssuerBaseUrlKey, value: snapshot.tokenIssuerBaseUrl);
   }
 
   Future<String> _readString(String key) async {
@@ -65,26 +58,6 @@ final class DemoDownlinkConfigurationStore {
         'downlink_preferences_read_failed key=$key error=$error',
       );
       return '';
-    }
-  }
-
-  Future<String> _readTokenIssuerBaseUrl() async {
-    final String storedBaseUrl = await _readString(tokenIssuerBaseUrlKey);
-    if (storedBaseUrl.trim().isNotEmpty) {
-      return _normalizedStoredTokenIssuerBaseUrl(storedBaseUrl);
-    }
-    final String legacyUrl = await _readString(legacyTokenIssuerUrlKey);
-    return _normalizedStoredTokenIssuerBaseUrl(legacyUrl);
-  }
-
-  String _normalizedStoredTokenIssuerBaseUrl(String value) {
-    if (value.trim().isEmpty) {
-      return '';
-    }
-    try {
-      return normalizeDemoTokenIssuerBaseUrl(value);
-    } on FormatException {
-      return value.trim();
     }
   }
 }

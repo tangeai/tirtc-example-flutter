@@ -4,7 +4,6 @@ import importlib
 import json
 import os
 import sys
-from argparse import ArgumentParser
 from argparse import Namespace
 from pathlib import Path
 from typing import Any
@@ -28,20 +27,13 @@ def _public_parser(layer: str) -> CaseArgumentParser:
   parser = CaseArgumentParser(description=f"Run Flutter SDK {layer} cases.")
   add_common_options(parser, dry_run=False)
   if layer == "smoke":
-    parser.add_argument("--flow", default="downlink_ui", choices=("downlink_ui", "device_server", "device_server_ui", "all"))
     parser.add_argument("--token-source", default="issuer", choices=("issuer", "one_time_token"))
+    parser.set_defaults(flow="downlink_ui")
   else:
     parser.add_argument("--codec", default="h264", choices=("h264", "h265", "mjpeg", "all"))
-    parser.add_argument(
-      "--scenario",
-      default="all",
-      choices=("cli_device_to_flutter_client", "flutter_device_server_to_cli_client", "all"),
-    )
     parser.add_argument("--buffer-policy", default="automatic", choices=("automatic", "no_buffer"))
     parser.add_argument("--audio-case")
-    parser.add_argument("--encoder-preference", choices=("software", "hardware"))
     parser.add_argument("--video-decoder-preference", type=int, default=0, choices=(0, 1, 2))
-    parser.add_argument("--local-video-uplink-cases", action="store_true")
     parser.add_argument("--source-input-mode", choices=("file", "system"))
   return parser
 
@@ -54,27 +46,6 @@ def _parse_public_args(layer: str, argv: list[str]) -> Namespace:
   parser = _public_parser(layer)
   args, _unknown = parser.parse_known_args(argv)
   return args
-
-
-def _legacy_argv(layer: str, argv: list[str]) -> list[str]:
-  if layer != "smoke":
-    return list(argv)
-  result: list[str] = []
-  iterator = iter(argv)
-  for item in iterator:
-    if item == "--flow":
-      result.append(item)
-      try:
-        value = next(iterator)
-      except StopIteration:
-        break
-      result.append("device_server_ui" if value == "device_server" else value)
-      continue
-    if item == "--flow=device_server":
-      result.append("--flow=device_server_ui")
-      continue
-    result.append(item)
-  return result
 
 
 def _legacy_unavailable(layer: str, argv: list[str]) -> int:
@@ -141,39 +112,6 @@ def _smoke_required_markers(legacy: Any, args: Namespace) -> list[str]:
   if callable(required):
     return list(required(args.flow))
   return []
-
-
-def _smoke_all_flow_evidence(legacy_summary: dict[str, Any], artifact_root: Path) -> dict[str, Any]:
-  flow_results = legacy_summary.get("flow_results")
-  if not isinstance(flow_results, dict):
-    return {}
-  observed: list[str] = []
-  log_ids: list[str] = []
-  counterpart_summary_path: str | None = None
-  for result in flow_results.values():
-    if not isinstance(result, dict):
-      continue
-    summary_path_value = result.get("summary_path")
-    if not isinstance(summary_path_value, str) or not summary_path_value:
-      continue
-    summary_path = Path(summary_path_value)
-    child_root = summary_path.parent
-    child_summary = read_json(summary_path) if summary_path.is_file() else {}
-    observed.extend(_marker_names(child_root / "flutter/markers.jsonl"))
-    log_id = child_summary.get("log_id")
-    if isinstance(log_id, str) and log_id:
-      log_ids.append(log_id)
-    if counterpart_summary_path is None:
-      counterpart_summary_path = (
-        child_summary.get("counterpart_summary_path")
-        or _relative_existing(artifact_root, child_root / "source/summary.json")
-        or _relative_existing(artifact_root, child_root / "client/summary.json")
-      )
-  return {
-    "observed_markers": observed,
-    "log_id": ",".join(log_ids) if log_ids else None,
-    "counterpart_summary_path": counterpart_summary_path,
-  }
 
 
 def _path_summary_value(root: Path, value: Any) -> str | None:
@@ -254,18 +192,6 @@ def _integration_log_id(legacy_summary: dict[str, Any], artifact_root: Path) -> 
     log_ids = [item.get("log_id") for item in scenario_results.values() if isinstance(item, dict)]
     if log_ids and all(isinstance(item, str) and item for item in log_ids):
       return ",".join(log_ids)
-  uplink_cell_results = legacy_summary.get("uplink_cell_results")
-  if isinstance(uplink_cell_results, list):
-    log_ids = [
-      item.get("log_id")
-      for item in uplink_cell_results
-      if isinstance(item, dict)
-      and item.get("status") == "passed"
-      and isinstance(item.get("log_id"), str)
-      and item.get("log_id")
-    ]
-    if log_ids:
-      return ",".join(log_ids)
   case_log_ids = _case_log_ids(artifact_root)
   if case_log_ids:
     return ",".join(case_log_ids)
@@ -274,10 +200,9 @@ def _integration_log_id(legacy_summary: dict[str, Any], artifact_root: Path) -> 
 
 def _layer_evidence(layer: str, legacy_summary: dict[str, Any], mode: str, *, artifact_root: Path, legacy: Any, args: Namespace) -> dict[str, Any]:
   if layer == "smoke":
-    all_flow = _smoke_all_flow_evidence(legacy_summary, artifact_root)
     markers_path = artifact_root / "flutter/markers.jsonl"
-    observed = list(legacy_summary.get("observed_markers") or []) or all_flow.get("observed_markers") or _marker_names(markers_path)
-    log_id = legacy_summary.get("log_id") or all_flow.get("log_id")
+    observed = list(legacy_summary.get("observed_markers") or []) or _marker_names(markers_path)
+    log_id = legacy_summary.get("log_id")
     evidence = {
       "ui_flow": {
         "name": legacy_summary.get("flow") or "downlink_ui",
@@ -297,9 +222,7 @@ def _layer_evidence(layer: str, legacy_summary: dict[str, Any], mode: str, *, ar
       },
       "teardown_ok": legacy_summary.get("run_ok") is True,
       "counterpart_summary_path": legacy_summary.get("counterpart_summary_path")
-      or all_flow.get("counterpart_summary_path")
-      or _relative_existing(artifact_root, artifact_root / "source/summary.json")
-      or _relative_existing(artifact_root, artifact_root / "client/summary.json"),
+      or _relative_existing(artifact_root, artifact_root / "source/summary.json"),
     }
     local_audio_input = _smoke_local_audio_input_evidence(legacy_summary)
     if local_audio_input is not None:
@@ -315,7 +238,6 @@ def _layer_evidence(layer: str, legacy_summary: dict[str, Any], mode: str, *, ar
     else list(legacy_summary.get("scenario_results") or []),
     "codec_results": list(legacy_summary.get("codec_results") or []),
     "audio_case_results": list(legacy_summary.get("audio_case_results") or []),
-    "local_video_uplink_results": list(legacy_summary.get("uplink_cell_results") or []),
     "markers_path": legacy_summary.get("markers_path") or "flutter/markers.jsonl",
     "required_markers": list(legacy_summary.get("required_markers") or []),
     "counterpart_summary_path": legacy_summary.get("counterpart_summary_path"),
@@ -343,7 +265,7 @@ def run_legacy_layer(module_name: str, layer: str, argv: list[str]) -> int:
   parser.add_argument("--cli-source", choices=("npm", "local", "path"))
   parser.add_argument("--cli-path")
   parser.add_argument("--cli-npm-spec")
-  args = parser.parse_args(_legacy_argv(layer, argv))
+  args = parser.parse_args(argv)
   if getattr(args, "dry_run", False):
     parser.error("--dry-run is not supported for this layer")
   validate_platform_args(args)
@@ -398,8 +320,6 @@ def run_legacy_layer(module_name: str, layer: str, argv: list[str]) -> int:
     if layer == "smoke":
       if args.platform == "all":
         rc = legacy.run_all_platforms(args)
-      elif args.flow == "all":
-        rc = legacy.run_all_flows(args)
       else:
         rc = legacy.run_single(args, run_override=run_id)
     else:
@@ -419,10 +339,30 @@ def run_legacy_layer(module_name: str, layer: str, argv: list[str]) -> int:
   case_summary["failure_stage"] = legacy_summary.get("failure_stage")
   for key in (
     "prepared_state_schema_version",
+    "provenance_contract_version",
     "artifact_visibility",
     "owner_responsibility_status",
     "native_artifact_ref",
     "prepared_state_path",
+    "prepared_state_id",
+    "prepared_state_sha256",
+    "flutter_source_identity",
+    "public_dart_api",
+    "flutter_sdk",
+    "darwin_identity",
+    "requested_arch",
+    "observed_arch",
+    "macos_arch_evidence_path",
+    "macos_arch_evidence_sha256",
+    "app_binary_sha256",
+    "app_bundle_sha256",
+    "app_reused",
+    "native_closure_sha256",
+    "loaded_images",
+    "vmmap_exit_code",
+    "vmmap_evidence",
+    "target_process",
+    "architecture_translation",
     "buffer_policy",
     "requested_output_buffer_policy",
     "requested_output_buffer_max_watermark_ms",
@@ -485,7 +425,7 @@ def _redact_json_value(value: object) -> bool:
   changed = False
   if isinstance(value, dict):
     for key, item in list(value.items()):
-      if key in {"token", "device_secret_key", "client_token"} and isinstance(item, str) and item:
+      if key == "token" and isinstance(item, str) and item:
         value[key] = "<redacted>"
         changed = True
       else:

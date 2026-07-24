@@ -1,23 +1,23 @@
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
-
-import 'package:tirtc_av_kit_example/src/demo_configuration.dart';
+import 'package:tirtc_example/src/demo_configuration.dart';
 
 const String automationRunIdDefine = String.fromEnvironment(
-  'TIRTC_AV_INTEGRATION_RUN_ID',
+  'TIRTC_INTEGRATION_RUN_ID',
 );
 const String automationPayloadDefine = String.fromEnvironment(
-  'TIRTC_AV_INTEGRATION_PAYLOAD_B64URL',
+  'TIRTC_INTEGRATION_PAYLOAD_B64URL',
 );
-const Set<String> _supportedDownlinkAudioCodecs = <String>{
+const Set<String> _supportedAudioCodecs = <String>{
   'g711a',
   'aac',
   'pcm',
   'opus',
   'amr',
 };
-const Set<int> _supportedDownlinkAudioChannels = <int>{1, 2};
+const Set<int> _supportedAudioSampleRates = <int>{8000, 16000};
+const Set<int> _supportedAudioChannels = <int>{1, 2};
 
 final class AutomationPayloadParseResult {
   const AutomationPayloadParseResult._({
@@ -54,7 +54,6 @@ final class AutomationPayloadParseResult {
 final class AutomationPayload {
   static const int schemaVersion = 1;
   static const String scenarioCliDeviceToFlutterClient = 'cli_device_to_flutter_client';
-  static const String scenarioFlutterDeviceServerToCliClient = 'flutter_device_server_to_cli_client';
   static const int expectedAudioStreamId = 10;
   static const int expectedVideoStreamId = 11;
   static const int expectedRenderWindowSeconds = 30;
@@ -69,15 +68,12 @@ final class AutomationPayload {
     required this.remoteId,
     required this.token,
     required this.tokenFingerprint,
-    required this.deviceId,
-    required this.deviceSecretKey,
     required this.audioStreamId,
     required this.videoStreamId,
     required this.codec,
     required this.audioCodec,
     required this.audioSampleRateHz,
     required this.audioChannels,
-    required this.encoderPreference,
     required this.videoDecoderPreference,
     required this.bufferPolicy,
     required this.renderWindowSeconds,
@@ -95,15 +91,12 @@ final class AutomationPayload {
   final String remoteId;
   final String token;
   final String tokenFingerprint;
-  final String deviceId;
-  final String deviceSecretKey;
   final int audioStreamId;
   final int videoStreamId;
   final String codec;
   final String audioCodec;
   final int audioSampleRateHz;
   final int audioChannels;
-  final String encoderPreference;
   final int videoDecoderPreference;
   final String bufferPolicy;
   final int renderWindowSeconds;
@@ -147,27 +140,20 @@ final class AutomationPayload {
     return AutomationPayloadParseResult.parsed(
       AutomationPayload(
         runId: runIdAuthority,
-        scenario: decoded.containsKey('scenario')
-            ? decoded['scenario']! as String
-            : AutomationPayload.scenarioCliDeviceToFlutterClient,
-        pairingId: decoded.containsKey('pairing_id') ? decoded['pairing_id']! as String : runIdAuthority,
+        scenario: decoded['scenario']! as String,
+        pairingId: decoded['pairing_id']! as String,
         bootstrapId: decoded['bootstrap_id']! as String,
-        appId: decoded.containsKey('app_id') ? decoded['app_id']! as String : '',
+        appId: decoded['app_id']! as String,
         endpoint: decoded['endpoint'] as String?,
-        remoteId: decoded.containsKey('remote_id') ? decoded['remote_id']! as String : '',
-        token: decoded.containsKey('token') ? decoded['token']! as String : '',
-        tokenFingerprint: decoded.containsKey('token_fingerprint') ? decoded['token_fingerprint']! as String : '',
-        deviceId: decoded.containsKey('device_id') ? decoded['device_id']! as String : '',
-        deviceSecretKey: decoded.containsKey('device_secret_key') ? decoded['device_secret_key']! as String : '',
+        remoteId: decoded['remote_id']! as String,
+        token: decoded['token']! as String,
+        tokenFingerprint: decoded['token_fingerprint']! as String,
         audioStreamId: decoded['audio_stream_id']! as int,
         videoStreamId: decoded['video_stream_id']! as int,
         codec: decoded['codec']! as String,
         audioCodec: decoded['audio_codec']! as String,
         audioSampleRateHz: decoded['audio_sample_rate_hz']! as int,
         audioChannels: decoded['audio_channels']! as int,
-        encoderPreference: decoded.containsKey('encoder_preference')
-            ? decoded['encoder_preference']! as String
-            : DemoDeviceEncoderPreference.hardware.name,
         videoDecoderPreference: decoded.containsKey('video_decoder_preference')
             ? decoded['video_decoder_preference']! as int
             : DemoExampleSettings.videoDecoderPreferenceAuto,
@@ -189,27 +175,14 @@ final class AutomationPayload {
       'bootstrap_id': bootstrapId,
       'app_id_present': appId.isNotEmpty,
       'endpoint': endpoint,
-      if (remoteId.isNotEmpty) 'remote_id': remoteId,
-      if (tokenFingerprint.isNotEmpty) 'token_fingerprint': tokenFingerprint,
-      if (scenario == scenarioFlutterDeviceServerToCliClient) 'device_id_present': deviceId.isNotEmpty,
+      'remote_id': remoteId,
+      'token_fingerprint': tokenFingerprint,
       'audio_stream_id': audioStreamId,
       'video_stream_id': videoStreamId,
       'codec': codec,
       'audio_codec': audioCodec,
       'audio_sample_rate_hz': audioSampleRateHz,
       'audio_channels': audioChannels,
-      if (scenario == scenarioFlutterDeviceServerToCliClient) ...<String, Object?>{
-        'page_role': 'device_server',
-        'page_lifecycle': 'manual_page',
-        'requested_audio_codec': audioCodec,
-        'requested_audio_sample_rate_hz': audioSampleRateHz,
-        'requested_audio_channels': audioChannels,
-        'requested_video_codec': codec,
-        'requested_encoder_preference': encoderPreference,
-        'requested_width': DemoDeviceServerConfiguration.fixedVideoWidth,
-        'requested_height': DemoDeviceServerConfiguration.fixedVideoHeight,
-        'requested_fps': DemoDeviceServerConfiguration.fixedVideoFps,
-      },
       'video_decoder_preference': videoDecoderPreference,
       'buffer_policy': bufferPolicy,
       'requested_output_buffer_policy': bufferPolicy,
@@ -223,121 +196,61 @@ final class AutomationPayload {
   }
 
   static String? _validate(Map<String, Object?> payload, String runIdAuthority) {
-    final Object? schemaVersion = payload['schema_version'];
-    if (schemaVersion != AutomationPayload.schemaVersion) {
+    if (payload['schema_version'] != schemaVersion) {
       return 'schema_version must be 1';
     }
     if (payload['run_id'] != runIdAuthority) {
       return 'run id mismatch';
     }
-    final String scenario = payload.containsKey('scenario')
-        ? _stringField(payload, 'scenario') ?? ''
-        : AutomationPayload.scenarioCliDeviceToFlutterClient;
-    if (scenario != AutomationPayload.scenarioCliDeviceToFlutterClient &&
-        scenario != AutomationPayload.scenarioFlutterDeviceServerToCliClient) {
-      return 'scenario is invalid';
+    if (payload['scenario'] != scenarioCliDeviceToFlutterClient) {
+      return 'scenario must be cli_device_to_flutter_client';
     }
-    final String? bootstrapId = _requiredString(payload, 'bootstrap_id');
-    final String? codec = _requiredString(payload, 'codec');
-    if (payload.containsKey('pairing_id') && _requiredString(payload, 'pairing_id') != null) {
-      return 'pairing_id is required';
-    }
-    if (bootstrapId != null || codec != null) {
-      return bootstrapId ?? codec;
-    }
-    if (scenario == AutomationPayload.scenarioCliDeviceToFlutterClient) {
-      final String? appId = _requiredString(payload, 'app_id');
-      final String? remoteId = _requiredString(payload, 'remote_id');
-      final String? token = _requiredString(payload, 'token');
-      final String? tokenFingerprint = _requiredString(payload, 'token_fingerprint');
-      if (appId != null || remoteId != null || token != null || tokenFingerprint != null) {
-        return appId ?? remoteId ?? token ?? tokenFingerprint;
-      }
-    } else {
-      if (payload.containsKey('app_id') && payload['app_id'] is! String) {
-        return 'app_id must be a string';
-      }
-      final String? deviceId = _requiredString(payload, 'device_id');
-      final String? deviceSecretKey = _requiredString(payload, 'device_secret_key');
-      if (deviceId != null || deviceSecretKey != null) {
-        return deviceId ?? deviceSecretKey;
-      }
-      if (payload.containsKey('width') ||
-          payload.containsKey('height') ||
-          payload.containsKey('frame_rate') ||
-          payload.containsKey('bitrate_kbps')) {
-        return 'capture dimensions are fixed';
-      }
-    }
-    if (payload['codec'] is! String) {
-      return 'codec must be a string';
-    }
-    if (payload['audio_codec'] is! String) {
-      return 'audio_codec must be a string';
-    }
-    final String audioCodec = payload['audio_codec']! as String;
-    if (payload['audio_sample_rate_hz'] is! int ||
-        DemoDeviceAudioSampleRate.tryParseHertz(payload['audio_sample_rate_hz']! as int) == null) {
-      return 'audio_sample_rate_hz must be 8000 or 16000';
-    }
-    final int audioSampleRateHz = payload['audio_sample_rate_hz']! as int;
-    if (payload['audio_channels'] is! int) {
-      return scenario == AutomationPayload.scenarioCliDeviceToFlutterClient
-          ? 'audio_channels must be 1 or 2'
-          : 'audio_channels must be 1';
-    }
-    final int audioChannels = payload['audio_channels']! as int;
-    if (scenario == AutomationPayload.scenarioCliDeviceToFlutterClient) {
-      if (!_supportedDownlinkAudioCodecs.contains(audioCodec)) {
-        return 'audio_codec must be pcm, g711a, aac, opus, or amr';
-      }
-      if (!_supportedDownlinkAudioChannels.contains(audioChannels)) {
-        return 'audio_channels must be 1 or 2';
-      }
-      if (audioCodec == 'amr' && (audioSampleRateHz != 8000 || audioChannels != 1)) {
-        return 'amr audio must be 8000 Hz mono';
-      }
-    } else {
-      if (DemoDeviceAudioCodec.tryParse(audioCodec) == null) {
-        return 'audio_codec must be g711a, aac, or pcm for device server audio input';
-      }
-      if (DemoDeviceAudioChannelCount.tryParseCount(audioChannels) == null) {
-        return 'audio_channels must be 1';
-      }
-    }
-    final String codecValue = payload['codec']! as String;
-    if (scenario == AutomationPayload.scenarioFlutterDeviceServerToCliClient) {
-      if (DemoDeviceVideoCodec.tryParse(codecValue) == null) {
-        return 'server codec must be h264, h265, or mjpeg';
-      }
-      final Object? rawEncoderPreference = payload['encoder_preference'];
-      if (rawEncoderPreference != null && rawEncoderPreference is! String) {
-        return 'encoder_preference must be a string';
-      }
-      final String encoderPreferenceValue =
-          rawEncoderPreference is String ? rawEncoderPreference : DemoDeviceEncoderPreference.hardware.name;
-      final DemoDeviceEncoderPreference? encoderPreference =
-          DemoDeviceEncoderPreference.tryParse(encoderPreferenceValue);
-      if (encoderPreference == null) {
-        return 'encoder_preference must be software or hardware';
+    for (final String key in <String>[
+      'pairing_id',
+      'bootstrap_id',
+      'app_id',
+      'remote_id',
+      'token',
+      'token_fingerprint',
+      'codec',
+      'audio_codec',
+    ]) {
+      final String? error = _requiredString(payload, key);
+      if (error != null) {
+        return error;
       }
     }
     if (payload['endpoint'] != null && payload['endpoint'] is! String) {
       return 'endpoint must be a string or null';
     }
+    final String audioCodec = payload['audio_codec']! as String;
+    if (!_supportedAudioCodecs.contains(audioCodec)) {
+      return 'audio_codec must be pcm, g711a, aac, opus, or amr';
+    }
+    if (payload['audio_sample_rate_hz'] is! int ||
+        !_supportedAudioSampleRates.contains(payload['audio_sample_rate_hz'])) {
+      return 'audio_sample_rate_hz must be 8000 or 16000';
+    }
+    if (payload['audio_channels'] is! int || !_supportedAudioChannels.contains(payload['audio_channels'])) {
+      return 'audio_channels must be 1 or 2';
+    }
+    final int audioSampleRateHz = payload['audio_sample_rate_hz']! as int;
+    final int audioChannels = payload['audio_channels']! as int;
+    if (audioCodec == 'amr' && (audioSampleRateHz != 8000 || audioChannels != 1)) {
+      return 'amr audio must be 8000 Hz mono';
+    }
     if (payload['audio_stream_id'] != expectedAudioStreamId || payload['video_stream_id'] != expectedVideoStreamId) {
       return 'stream id mismatch';
     }
     if (payload.containsKey('video_decoder_preference')) {
-      final Object? videoDecoderPreference = payload['video_decoder_preference'];
-      if (videoDecoderPreference is! int ||
-          !DemoExampleSettings.isValidVideoDecoderPreference(videoDecoderPreference)) {
+      final Object? value = payload['video_decoder_preference'];
+      if (value is! int || !DemoExampleSettings.isValidVideoDecoderPreference(value)) {
         return 'video_decoder_preference must be 0, 1, or 2';
       }
     }
     if (payload.containsKey('buffer_policy')) {
-      final Object? bufferPolicy = payload['buffer_policy'];
-      if (bufferPolicy is! String || !DemoExampleSettings.isValidOutputBufferPolicy(bufferPolicy)) {
+      final Object? value = payload['buffer_policy'];
+      if (value is! String || !DemoExampleSettings.isValidOutputBufferPolicy(value)) {
         return 'buffer_policy must be automatic or no_buffer';
       }
     }
@@ -356,22 +269,13 @@ final class AutomationPayload {
     if (payload['auto_upload_logs'] != true) {
       return 'auto_upload_logs must be true';
     }
-    if (payload.containsKey('console_log_enabled')) {
-      final Object? consoleLogEnabled = payload['console_log_enabled'];
-      if (consoleLogEnabled != true) {
-        return 'console_log_enabled must be true';
-      }
+    if (payload.containsKey('console_log_enabled') && payload['console_log_enabled'] != true) {
+      return 'console_log_enabled must be true';
     }
-    if (scenario == AutomationPayload.scenarioCliDeviceToFlutterClient &&
-        _fingerprint(payload['token']! as String) != payload['token_fingerprint']) {
+    if (_fingerprint(payload['token']! as String) != payload['token_fingerprint']) {
       return 'token fingerprint mismatch';
     }
     return null;
-  }
-
-  static String? _stringField(Map<String, Object?> payload, String key) {
-    final Object? value = payload[key];
-    return value is String ? value : null;
   }
 
   static String? _requiredString(Map<String, Object?> payload, String key) {

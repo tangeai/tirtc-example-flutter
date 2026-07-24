@@ -1,5 +1,5 @@
 import 'package:flutter/widgets.dart';
-import 'package:tirtc_av_kit/tirtc_av_kit.dart';
+import 'package:tirtc_flutter/tirtc_flutter.dart';
 
 final RouteObserver<PageRoute<dynamic>> exampleRouteObserver = RouteObserver<PageRoute<dynamic>>();
 

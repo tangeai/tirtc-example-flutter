@@ -1,4 +1,4 @@
-package com.tange.ai.tirtc_av_kit_example
+package com.tange.ai.tirtc_example
 
 import android.Manifest
 import android.content.Context
@@ -33,8 +33,6 @@ class MainActivity : FlutterActivity() {
             PERMISSIONS_CHANNEL_NAME,
         ).setMethodCallHandler { call, result ->
             when (call.method) {
-                "checkCameraPermission" -> result.success(permissionGranted(Manifest.permission.CAMERA))
-                "requestCameraPermission" -> requestPermission(Manifest.permission.CAMERA, result)
                 "checkMicrophonePermission" -> result.success(permissionGranted(Manifest.permission.RECORD_AUDIO))
                 "requestMicrophonePermission" -> requestPermission(Manifest.permission.RECORD_AUDIO, result)
                 "requestLocalNetworkPermission" -> result.success(true)
@@ -178,11 +176,11 @@ class MainActivity : FlutterActivity() {
     }
 
     companion object {
-        private const val PREFERENCES_CHANNEL_NAME = "tirtc_av_kit_example/preferences"
-        private const val PERMISSIONS_CHANNEL_NAME = "tirtc_av_kit_example/permissions"
-        private const val PERFORMANCE_CHANNEL_NAME = "tirtc_av_kit_example/performance"
+        private const val PREFERENCES_CHANNEL_NAME = "tirtc_example/preferences"
+        private const val PERMISSIONS_CHANNEL_NAME = "tirtc_example/permissions"
+        private const val PERFORMANCE_CHANNEL_NAME = "tirtc_example/performance"
         private const val PERFORMANCE_EXTRA_PREFIX = "tirtc_perf_"
-        private const val PREFERENCES_FILE_NAME = "tirtc_av_kit_example_preferences"
+        private const val PREFERENCES_FILE_NAME = "tirtc_example_preferences"
         private const val CAPTURE_PERMISSION_REQUEST_CODE = 7610
     }
 }

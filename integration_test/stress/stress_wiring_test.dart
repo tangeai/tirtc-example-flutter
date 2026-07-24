@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:tirtc_av_kit/tirtc_av_kit.dart';
+import 'package:tirtc_flutter/tirtc_flutter.dart';
 
 void main() {
   testWidgets('stress local audio input lifecycle surface case', (WidgetTester tester) async {

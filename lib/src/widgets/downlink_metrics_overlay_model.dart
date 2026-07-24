@@ -17,11 +17,8 @@ const double _minimumVideoRenderContinuityRatio = 0.8;
 class DownlinkMetricsOverlayModel {
   const DownlinkMetricsOverlayModel({
     required this.connectDurationMs,
-    required this.firstFrameDurationMs,
-    required this.sessionStutterRatio,
-    required this.sessionStutterTotalMs,
-    required this.sessionStutterCount,
-    required this.sessionStutterPeakMs,
+    required this.firstVideoOutputMs,
+    required this.firstAudioOutputMs,
     required this.videoWidth,
     required this.videoHeight,
     required this.videoCodec,
@@ -33,56 +30,35 @@ class DownlinkMetricsOverlayModel {
     required this.audioInputBitrateKbps,
     required this.audioInputPacketRate,
     required this.audioRenderCallbackRate,
-    required this.audioRecentStutterRatio,
-    required this.audioRecentStutterCount,
-    required this.audioRecentStutterTotalMs,
-    required this.audioRecentStutterPeakMs,
-    required this.audioRateWindowDurationMs,
-    required this.audioLatencyWindowDurationMs,
-    required this.audioLatencyTotalAverageMs,
-    required this.audioLatencyBufferAverageMs,
-    required this.audioLatencyDecodeReadyAverageMs,
-    required this.audioLatencyOutputAverageMs,
-    required this.audioLatencyTotalSampleCount,
-    required this.audioLatencyBufferSampleCount,
-    required this.audioLatencyDecodeReadySampleCount,
-    required this.audioLatencyOutputSampleCount,
-    required this.audioLatencyTotalUnavailableCount,
-    required this.audioLatencySessionDurationMs,
-    required this.audioLatencySessionTotalAverageMs,
-    required this.audioLatencySessionTotalMinMs,
-    required this.audioLatencySessionTotalPeakMs,
-    required this.audioLatencySessionTotalSampleCount,
-    required this.audioLatencySessionTotalUnavailableCount,
+    required this.audioStatsRefreshIntervalMs,
+    required this.audioStatsUpdatedAtMs,
+    required this.audioStutterThresholdMs,
+    required this.audioOutputDurationMs,
+    required this.audioStutterTotalMs,
+    required this.audioStutterCount,
+    required this.audioStutterPeakMs,
+    required this.audioStutterAverageMs,
+    required this.audioStutterRate,
+    required this.audioEstimatedOutputLatencyMs,
     required this.videoInputBitrateKbps,
     required this.videoInputFps,
     required this.videoDecodedFps,
     required this.videoRenderFps,
-    required this.videoRateWindowDurationMs,
-    required this.videoLatencyWindowDurationMs,
-    required this.videoLatencyTotalAverageMs,
-    required this.videoLatencyBufferAverageMs,
-    required this.videoLatencyDecodeReadyAverageMs,
-    required this.videoLatencyOutputAverageMs,
-    required this.videoLatencyTotalSampleCount,
-    required this.videoLatencyBufferSampleCount,
-    required this.videoLatencyDecodeReadySampleCount,
-    required this.videoLatencyOutputSampleCount,
-    required this.videoLatencyTotalUnavailableCount,
-    required this.videoLatencySessionDurationMs,
-    required this.videoLatencySessionTotalAverageMs,
-    required this.videoLatencySessionTotalMinMs,
-    required this.videoLatencySessionTotalPeakMs,
-    required this.videoLatencySessionTotalSampleCount,
-    required this.videoLatencySessionTotalUnavailableCount,
+    required this.videoStatsRefreshIntervalMs,
+    required this.videoStatsUpdatedAtMs,
+    required this.videoStutterThresholdMs,
+    required this.videoOutputDurationMs,
+    required this.videoStutterTotalMs,
+    required this.videoStutterCount,
+    required this.videoStutterPeakMs,
+    required this.videoStutterAverageMs,
+    required this.videoStutterRate,
+    required this.videoEstimatedOutputLatencyMs,
   });
 
   final int? connectDurationMs;
-  final int? firstFrameDurationMs;
-  final double? sessionStutterRatio;
-  final int? sessionStutterTotalMs;
-  final int? sessionStutterCount;
-  final int? sessionStutterPeakMs;
+  final int? firstVideoOutputMs;
+  final int? firstAudioOutputMs;
   final int? videoWidth;
   final int? videoHeight;
   final int? videoCodec;
@@ -94,48 +70,30 @@ class DownlinkMetricsOverlayModel {
   final double? audioInputBitrateKbps;
   final double? audioInputPacketRate;
   final double? audioRenderCallbackRate;
-  final double? audioRecentStutterRatio;
-  final int? audioRecentStutterCount;
-  final int? audioRecentStutterTotalMs;
-  final int? audioRecentStutterPeakMs;
-  final int? audioRateWindowDurationMs;
-  final int? audioLatencyWindowDurationMs;
-  final int? audioLatencyTotalAverageMs;
-  final int? audioLatencyBufferAverageMs;
-  final int? audioLatencyDecodeReadyAverageMs;
-  final int? audioLatencyOutputAverageMs;
-  final int? audioLatencyTotalSampleCount;
-  final int? audioLatencyBufferSampleCount;
-  final int? audioLatencyDecodeReadySampleCount;
-  final int? audioLatencyOutputSampleCount;
-  final int? audioLatencyTotalUnavailableCount;
-  final int? audioLatencySessionDurationMs;
-  final int? audioLatencySessionTotalAverageMs;
-  final int? audioLatencySessionTotalMinMs;
-  final int? audioLatencySessionTotalPeakMs;
-  final int? audioLatencySessionTotalSampleCount;
-  final int? audioLatencySessionTotalUnavailableCount;
+  final int? audioStatsRefreshIntervalMs;
+  final int? audioStatsUpdatedAtMs;
+  final int? audioStutterThresholdMs;
+  final int? audioOutputDurationMs;
+  final int? audioStutterTotalMs;
+  final int? audioStutterCount;
+  final int? audioStutterPeakMs;
+  final int? audioStutterAverageMs;
+  final double? audioStutterRate;
+  final int? audioEstimatedOutputLatencyMs;
   final double? videoInputBitrateKbps;
   final double? videoInputFps;
   final double? videoDecodedFps;
   final double? videoRenderFps;
-  final int? videoRateWindowDurationMs;
-  final int? videoLatencyWindowDurationMs;
-  final int? videoLatencyTotalAverageMs;
-  final int? videoLatencyBufferAverageMs;
-  final int? videoLatencyDecodeReadyAverageMs;
-  final int? videoLatencyOutputAverageMs;
-  final int? videoLatencyTotalSampleCount;
-  final int? videoLatencyBufferSampleCount;
-  final int? videoLatencyDecodeReadySampleCount;
-  final int? videoLatencyOutputSampleCount;
-  final int? videoLatencyTotalUnavailableCount;
-  final int? videoLatencySessionDurationMs;
-  final int? videoLatencySessionTotalAverageMs;
-  final int? videoLatencySessionTotalMinMs;
-  final int? videoLatencySessionTotalPeakMs;
-  final int? videoLatencySessionTotalSampleCount;
-  final int? videoLatencySessionTotalUnavailableCount;
+  final int? videoStatsRefreshIntervalMs;
+  final int? videoStatsUpdatedAtMs;
+  final int? videoStutterThresholdMs;
+  final int? videoOutputDurationMs;
+  final int? videoStutterTotalMs;
+  final int? videoStutterCount;
+  final int? videoStutterPeakMs;
+  final int? videoStutterAverageMs;
+  final double? videoStutterRate;
+  final int? videoEstimatedOutputLatencyMs;
 
   String get displayVideoSize {
     final int? width = videoWidth;
@@ -196,9 +154,7 @@ class DownlinkMetricsOverlayModel {
     return _positive(audioInputBitrateKbps) &&
         _positive(audioInputPacketRate) &&
         _positive(audioRenderCallbackRate) &&
-        _positive(audioRateWindowDurationMs) &&
-        _positive(audioLatencyWindowDurationMs) &&
-        _positive(audioLatencyTotalSampleCount);
+        _positive(audioStatsRefreshIntervalMs);
   }
 
   double? get audioOutputContinuityRatio {
@@ -206,7 +162,7 @@ class DownlinkMetricsOverlayModel {
   }
 
   bool get audioOutputHealthOk {
-    return audioOutputMetricsReady && (audioRecentStutterCount ?? 0) == 0;
+    return audioOutputMetricsReady && (audioStutterCount ?? 0) == 0;
   }
 
   bool get videoOutputMetricsReady {
@@ -214,9 +170,7 @@ class DownlinkMetricsOverlayModel {
         _positive(videoInputFps) &&
         _positive(videoDecodedFps) &&
         _positive(videoRenderFps) &&
-        _positive(videoRateWindowDurationMs) &&
-        _positive(videoLatencyWindowDurationMs) &&
-        _positive(videoLatencyTotalSampleCount);
+        _positive(videoStatsRefreshIntervalMs);
   }
 
   double? get videoRenderContinuityRatio {
@@ -225,33 +179,35 @@ class DownlinkMetricsOverlayModel {
 
   bool get videoOutputHealthOk {
     final double? ratio = videoRenderContinuityRatio;
-    return videoOutputMetricsReady && ratio != null && ratio >= _minimumVideoRenderContinuityRatio;
+    return videoOutputMetricsReady &&
+        ratio != null &&
+        ratio >= _minimumVideoRenderContinuityRatio &&
+        (videoStutterCount ?? 0) == 0;
   }
 
   bool get avOutputHealthOk {
     return audioOutputHealthOk && videoOutputHealthOk;
   }
 
-  bool get localLatencyReady {
-    return _positive(audioLatencyWindowDurationMs) &&
-        _positive(videoLatencyWindowDurationMs) &&
-        _positive(audioLatencyTotalSampleCount) &&
-        _positive(videoLatencyTotalSampleCount);
+  bool get latencyReady {
+    return _nonNegative(audioEstimatedOutputLatencyMs) && _nonNegative(videoEstimatedOutputLatencyMs);
   }
 
-  bool get latencyPeriodReady {
-    return _positive(audioLatencySessionTotalSampleCount) && _positive(videoLatencySessionTotalSampleCount);
+  bool get latencyMetricsValid {
+    return _validOutputLatency(audioEstimatedOutputLatencyMs) && _validOutputLatency(videoEstimatedOutputLatencyMs);
   }
 
-  bool get stutterPeriodReady {
-    return sessionStutterRatio != null &&
-        sessionStutterTotalMs != null &&
-        sessionStutterCount != null &&
-        sessionStutterPeakMs != null;
+  bool get stutterReady {
+    return _nonNegative(audioOutputDurationMs) &&
+        _nonNegative(videoOutputDurationMs) &&
+        _nonNegative(audioStutterTotalMs) &&
+        _nonNegative(videoStutterTotalMs) &&
+        _nonNegative(audioStutterRate) &&
+        _nonNegative(videoStutterRate);
   }
 
   bool get periodSummaryAvailable {
-    return latencyPeriodReady && stutterPeriodReady;
+    return latencyReady && stutterReady;
   }
 
   List<DownlinkMetricsOverlayRow> get overlayRows {
@@ -279,29 +235,28 @@ class DownlinkMetricsOverlayModel {
       DownlinkMetricsOverlayRow(
         rowKey: 'latency_stats',
         widgetKey: DemoWidgetKeys.downlinkMetricsLatencyStatsText,
-        label: '缓冲长度',
+        label: '估算延迟',
         value:
-            '视频 ${_formatLatencyDuration(videoLatencyBufferAverageMs, sampleCount: videoLatencyBufferSampleCount)} · '
-            '音频 ${_formatLatencyDuration(audioLatencyBufferAverageMs, sampleCount: audioLatencyBufferSampleCount)}',
+            '视频 ${_formatDuration(videoEstimatedOutputLatencyMs)} · 音频 ${_formatDuration(audioEstimatedOutputLatencyMs)}',
         periodTextPresent: true,
-        periodAvailable: latencyPeriodReady,
-        unavailableReason: latencyPeriodReady ? null : 'latency_session_samples_unavailable',
+        periodAvailable: latencyReady,
+        unavailableReason: latencyReady ? null : 'latency_metrics_unavailable',
       ),
       DownlinkMetricsOverlayRow(
         rowKey: 'startup',
         widgetKey: DemoWidgetKeys.downlinkMetricsStartupText,
         label: '启动耗时',
-        value: _formatStartup(connectDurationMs, firstFrameDurationMs),
+        value: _formatStartup(connectDurationMs, firstVideoOutputMs),
       ),
       DownlinkMetricsOverlayRow(
         rowKey: 'stutter',
         widgetKey: DemoWidgetKeys.downlinkMetricsStutterText,
         label: '卡顿统计',
-        value: '视频 ${_formatCount(sessionStutterCount)} / 最长 ${_formatDuration(sessionStutterPeakMs)} · '
-            '音频最近 ${_formatCount(audioRecentStutterCount)} / 最长 ${_formatDuration(audioRecentStutterPeakMs)}',
+        value: '视频 ${_formatCount(videoStutterCount)} / 最长 ${_formatDuration(videoStutterPeakMs)} · '
+            '音频 ${_formatCount(audioStutterCount)} / 最长 ${_formatDuration(audioStutterPeakMs)}',
         periodTextPresent: true,
-        periodAvailable: stutterPeriodReady,
-        unavailableReason: stutterPeriodReady ? null : 'stutter_session_unavailable',
+        periodAvailable: stutterReady,
+        unavailableReason: stutterReady ? null : 'stutter_metrics_unavailable',
       ),
     ];
   }
@@ -364,6 +319,14 @@ class DownlinkMetricsOverlayModel {
 
   static bool _positive(num? value) {
     return value != null && value > 0;
+  }
+
+  static bool _nonNegative(num? value) {
+    return value != null && value >= 0;
+  }
+
+  static bool _validOutputLatency(int? value) {
+    return value != null && (value >= 0 || value == -1);
   }
 
   static double? _rateRatio(double? numerator, double? denominator) {
@@ -431,23 +394,13 @@ String _formatCount(int? count) {
   return '$count 次';
 }
 
-String _formatLatencyDuration(int? value, {required int? sampleCount}) {
-  if (sampleCount != null && sampleCount <= 0) {
-    return '--';
-  }
-  if (value == null || value < 0) {
-    return '--';
-  }
-  return '$value ms';
-}
-
-String _formatStartup(int? connectDurationMs, int? firstFrameDurationMs) {
+String _formatStartup(int? connectDurationMs, int? firstOutputMs) {
   final String connectText = '连接 ${_formatDuration(connectDurationMs)}';
   if (connectDurationMs != null &&
-      firstFrameDurationMs != null &&
+      firstOutputMs != null &&
       connectDurationMs >= 0 &&
-      firstFrameDurationMs >= connectDurationMs) {
-    return '$connectText · 首帧等待 ${_formatDuration(firstFrameDurationMs - connectDurationMs)}';
+      firstOutputMs >= connectDurationMs) {
+    return '$connectText · 首帧等待 ${_formatDuration(firstOutputMs - connectDurationMs)}';
   }
-  return '$connectText · 首帧总耗时 ${_formatDuration(firstFrameDurationMs)}';
+  return '$connectText · 首帧总耗时 ${_formatDuration(firstOutputMs)}';
 }

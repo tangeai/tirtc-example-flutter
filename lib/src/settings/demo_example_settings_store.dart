@@ -1,4 +1,4 @@
-import 'package:tirtc_av_kit/tirtc_av_kit.dart';
+import 'package:tirtc_flutter/tirtc_flutter.dart';
 
 import '../demo_configuration.dart';
 import 'example_preferences.dart';
@@ -8,15 +8,15 @@ final class DemoExampleSettingsStore {
     this.preferences = const MethodChannelDemoExamplePreferences(),
   });
 
-  static const String videoDecoderPreferenceKey = 'tirtc_av_kit_example.settings.video_decoder_preference';
-  static const String outputBufferPolicyKey = 'tirtc_av_kit_example.settings.output_buffer_policy';
-  static const String consoleLogEnabledKey = 'tirtc_av_kit_example.settings.console_log_enabled';
-  static const String localAudioCodecKey = 'tirtc_av_kit_example.settings.local_audio_codec';
-  static const String localAudioSampleRateKey = 'tirtc_av_kit_example.settings.local_audio_sample_rate_hz';
-  static const String localAudioStreamIdKey = 'tirtc_av_kit_example.settings.local_audio_stream_id';
-  static const String localAudioAecEnabledKey = 'tirtc_av_kit_example.settings.local_audio_aec_enabled';
-  static const String localAudioAgcLevelKey = 'tirtc_av_kit_example.settings.local_audio_agc_level';
-  static const String localAudioAnsLevelKey = 'tirtc_av_kit_example.settings.local_audio_ans_level';
+  static const String videoDecoderPreferenceKey = 'tirtc_example.settings.video_decoder_preference';
+  static const String outputBufferPolicyKey = 'tirtc_example.settings.output_buffer_policy';
+  static const String consoleLogEnabledKey = 'tirtc_example.settings.console_log_enabled';
+  static const String localAudioCodecKey = 'tirtc_example.settings.local_audio_codec';
+  static const String localAudioSampleRateKey = 'tirtc_example.settings.local_audio_sample_rate_hz';
+  static const String localAudioStreamIdKey = 'tirtc_example.settings.local_audio_stream_id';
+  static const String localAudioAecEnabledKey = 'tirtc_example.settings.local_audio_aec_enabled';
+  static const String localAudioAgcLevelKey = 'tirtc_example.settings.local_audio_agc_level';
+  static const String localAudioAnsLevelKey = 'tirtc_example.settings.local_audio_ans_level';
 
   final DemoExamplePreferences preferences;
 

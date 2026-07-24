@@ -1,62 +1,27 @@
 import 'dart:async';
-import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:tirtc_av_kit/tirtc_av_kit.dart';
+import 'package:tirtc_flutter/tirtc_flutter.dart';
 
-import 'package:tirtc_av_kit_example/src/app_theme.dart';
-import 'package:tirtc_av_kit_example/src/demo_configuration.dart';
-import 'package:tirtc_av_kit_example/src/demo_device_server_controller.dart';
-import 'package:tirtc_av_kit_example/src/demo_downlink_session.dart';
-import 'package:tirtc_av_kit_example/src/demo_downlink_support.dart';
-import 'package:tirtc_av_kit_example/src/demo_stream_message.dart';
-import 'package:tirtc_av_kit_example/src/demo_test_hooks.dart' show DemoAutomationMarkerSink;
-import 'package:tirtc_av_kit_example/src/pages/configure_page.dart';
-import 'package:tirtc_av_kit_example/src/settings/demo_example_settings_store.dart';
-import 'package:tirtc_av_kit_example/src/widgets/notice_dialog.dart';
-import 'package:tirtc_av_kit_example/src/widgets/downlink_center_loading.dart';
-import 'package:tirtc_av_kit_example/src/widgets/downlink_metrics_overlay.dart';
-import 'package:tirtc_av_kit_example/src/widgets/downlink_metrics_overlay_markers.dart';
-import 'package:tirtc_av_kit_example/src/widgets/downlink_metrics_overlay_model.dart';
-import 'package:tirtc_av_kit_example/src/widgets/player_page_widgets.dart';
+import 'package:tirtc_example/src/app_theme.dart';
+import 'package:tirtc_example/src/demo_configuration.dart';
+import 'package:tirtc_example/src/demo_downlink_session.dart';
+import 'package:tirtc_example/src/demo_downlink_support.dart';
+import 'package:tirtc_example/src/demo_stream_message.dart';
+import 'package:tirtc_example/src/pages/configure_page.dart';
+import 'package:tirtc_example/src/settings/demo_example_settings_store.dart';
+import 'package:tirtc_example/src/widgets/notice_dialog.dart';
+import 'package:tirtc_example/src/widgets/downlink_center_loading.dart';
+import 'package:tirtc_example/src/widgets/downlink_metrics_overlay.dart';
+import 'package:tirtc_example/src/widgets/downlink_metrics_overlay_markers.dart';
+import 'package:tirtc_example/src/widgets/downlink_metrics_overlay_model.dart';
+import 'package:tirtc_example/src/widgets/player_page_widgets.dart';
 import 'av_contract_command_probe.dart';
 import 'av_contract_local_audio_probe.dart';
 import 'av_contract_marker_sink.dart';
 import 'av_contract_metrics_snapshot.dart';
 import 'av_contract_payload.dart';
-
-final class _ScenarioMarkerSink implements DemoAutomationMarkerSink {
-  _ScenarioMarkerSink({
-    required this.delegate,
-    required this.payload,
-  });
-
-  final DemoAutomationMarkerSink delegate;
-  final AutomationPayload payload;
-
-  @override
-  void passed(String marker, {Map<String, Object?> payload = const <String, Object?>{}}) {
-    if (marker == 'stream_message_sent') {
-      delegate.passed(marker, payload: <String, Object?>{
-        'scenario': this.payload.scenario,
-        'pairing_id': this.payload.pairingId,
-        ...payload,
-      });
-      return;
-    }
-    delegate.passed(marker, payload: payload);
-  }
-
-  @override
-  void failure({
-    required String failureStage,
-    required String message,
-    int? errorCode,
-  }) {
-    delegate.failure(failureStage: failureStage, message: message, errorCode: errorCode);
-  }
-}
 
 final class AutomationPage extends StatefulWidget {
   const AutomationPage({
@@ -71,9 +36,6 @@ final class AutomationPage extends StatefulWidget {
 }
 
 class _AutomationPageState extends State<AutomationPage> {
-  static const MethodChannel _permissionChannel = MethodChannel(
-    'tirtc_av_kit_example/permissions',
-  );
   static const Duration _stagePollInterval = Duration(milliseconds: 100);
   static const Duration _metricsPollInterval = Duration(seconds: 1);
   static const int _runtimeObjectsLiveCode = 1007;
@@ -83,8 +45,6 @@ class _AutomationPageState extends State<AutomationPage> {
   final DemoExampleSettingsStore _settingsStore = const DemoExampleSettingsStore();
   late final AutomationMarkerSink _markerSink;
   DemoDownlinkSession? _session;
-  TiRtcConnService? _service;
-  DemoDeviceServerController? _deviceServerController;
   Timer? _metricsPollTimer;
   DownlinkMetricsOverlayModel? _metricsOverlay;
   DownlinkMetricsOverlayModel? _lastAvStatsOverlay;
@@ -143,10 +103,6 @@ class _AutomationPageState extends State<AutomationPage> {
       testOutputBufferPolicy: payload.bufferPolicy,
     );
     _markerSink.passed('payload_applied', payload: payload.markerPayload());
-    if (payload.scenario == AutomationPayload.scenarioFlutterDeviceServerToCliClient) {
-      await _runFlutterDeviceServerToCliClient(payload, settings);
-      return;
-    }
 
     final int initializeCode = await TiRtc.initialize(
       TiRtcInitOptions(
@@ -191,22 +147,6 @@ class _AutomationPageState extends State<AutomationPage> {
     }
 
     _bindCallbacks();
-    final int connectCode = _session!.connect(remoteId: payload.remoteId, token: payload.token);
-    if (connectCode != 0) {
-      _fail(
-        failureStage: 'connect',
-        message: 'connect failed',
-        errorCode: connectCode,
-      );
-      return;
-    }
-    if (!await _waitFor(_connected!.future, failureStage: 'connect')) {
-      return;
-    }
-    _markerSink.passed('connected', payload: <String, Object?>{
-      'remote_id': payload.remoteId,
-    });
-
     final TiRtcOutputBufferStrategy outputBufferStrategy = _outputBufferStrategy(settings);
     final int audioOptionsCode = _session!.setAudioOptions(bufferStrategy: outputBufferStrategy);
     if (audioOptionsCode != 0) {
@@ -252,15 +192,6 @@ class _AutomationPageState extends State<AutomationPage> {
     _markerSink.passed('audio_attached', payload: <String, Object?>{
       'stream_id': payload.audioStreamId,
     });
-    if (_session!.audioState == TiRtcAudioOutputState.playing) {
-      _complete(_audioPlaying);
-    }
-    if (!await _waitFor(_audioPlaying!.future, failureStage: 'audio_output')) {
-      return;
-    }
-    _markerSink.passed('audio_playing', payload: <String, Object?>{
-      'audio_error_count': _audioErrorCount,
-    });
 
     TiRtcLogging.i(
       'flutter_example',
@@ -289,6 +220,31 @@ class _AutomationPageState extends State<AutomationPage> {
     _markerSink.passed('video_attached', payload: <String, Object?>{
       'stream_id': payload.videoStreamId,
     });
+
+    final int connectCode = _session!.connect(remoteId: payload.remoteId, token: payload.token);
+    if (connectCode != 0) {
+      _fail(
+        failureStage: 'connect',
+        message: 'connect failed',
+        errorCode: connectCode,
+      );
+      return;
+    }
+    if (!await _waitFor(_connected!.future, failureStage: 'connect')) {
+      return;
+    }
+    _markerSink.passed('connected', payload: <String, Object?>{
+      'remote_id': payload.remoteId,
+    });
+    if (_session!.audioState == TiRtcAudioOutputState.playing) {
+      _complete(_audioPlaying);
+    }
+    if (!await _waitFor(_audioPlaying!.future, failureStage: 'audio_output')) {
+      return;
+    }
+    _markerSink.passed('audio_playing', payload: <String, Object?>{
+      'audio_error_count': _audioErrorCount,
+    });
     if (_session!.videoState == TiRtcVideoOutputState.rendering) {
       _complete(_videoRendering);
     }
@@ -303,8 +259,8 @@ class _AutomationPageState extends State<AutomationPage> {
       );
       return;
     }
-    final int? firstFrameDurationMs = metrics.snapshot?.startup.firstFrameDurationMs;
-    if (metrics.code != 0 || firstFrameDurationMs == null || firstFrameDurationMs < 0) {
+    final int? firstOutputDurationMs = metrics.snapshot?.startup.timeToFirstOutputMs;
+    if (metrics.code != 0 || firstOutputDurationMs == null || firstOutputDurationMs < 0) {
       _fail(
         failureStage: 'render_timeout',
         message: 'first frame metrics unavailable',
@@ -313,7 +269,7 @@ class _AutomationPageState extends State<AutomationPage> {
       return;
     }
     _markerSink.passed('video_rendering', payload: <String, Object?>{
-      'first_frame_duration_ms': firstFrameDurationMs,
+      'first_frame_duration_ms': firstOutputDurationMs,
       'render_width': _renderSize?.width.round(),
       'render_height': _renderSize?.height.round(),
     });
@@ -337,6 +293,9 @@ class _AutomationPageState extends State<AutomationPage> {
         'buffer_policy_ok': true,
       },
     );
+    if (!await _runAudioOutputVolumeCycle()) {
+      return;
+    }
     if (!await _startAndroidTalkbackAudioIfNeeded(settings)) {
       return;
     }
@@ -355,9 +314,7 @@ class _AutomationPageState extends State<AutomationPage> {
     );
     final DownlinkMetricsOverlayModel? markerStats = _lastAvStatsOverlay ?? finalDebugStats;
     final bool videoOutputHealthy = _session!.videoState == TiRtcVideoOutputState.rendering ||
-        (payload.scenario == AutomationPayload.scenarioCliDeviceToFlutterClient &&
-            _session!.videoState == TiRtcVideoOutputState.buffering &&
-            _renderSize != null);
+        (_session!.videoState == TiRtcVideoOutputState.buffering && _renderSize != null);
     if (_audioErrorCount != 0 ||
         _videoErrorCount != 0 ||
         !_isHealthyAudioState(_session!.audioState) ||
@@ -455,6 +412,67 @@ class _AutomationPageState extends State<AutomationPage> {
     return true;
   }
 
+  Future<bool> _runAudioOutputVolumeCycle() async {
+    final DemoDownlinkSession? session = _session;
+    if (session == null) {
+      _fail(
+        failureStage: 'audio_output_volume',
+        message: 'downlink session missing before volume cycle',
+      );
+      return false;
+    }
+    final int? beforeDurationMs = session.audioMetrics().snapshot?.stutter.outputDurationMs;
+    final int muteCode = session.setAudioOutputVolume(0);
+    if (muteCode != 0) {
+      _fail(
+        failureStage: 'audio_output_volume',
+        message: 'audio output mute failed',
+        errorCode: muteCode,
+      );
+      return false;
+    }
+    _markerSink.passed('audio_output_muted', payload: <String, Object?>{
+      'volume_percent': 0,
+      'audio_state': session.audioState.name,
+    });
+    await Future<void>.delayed(const Duration(seconds: 5));
+    final TiRtcAudioOutputMetricsSnapshot? mutedSnapshot = session.audioMetrics().snapshot;
+    final int restoreCode = session.setAudioOutputVolume(100);
+    if (restoreCode != 0) {
+      _fail(
+        failureStage: 'audio_output_volume',
+        message: 'audio output restore failed',
+        errorCode: restoreCode,
+      );
+      return false;
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    final int? mutedDurationMs = mutedSnapshot?.stutter.outputDurationMs;
+    final bool outputContinued = beforeDurationMs != null &&
+        mutedDurationMs != null &&
+        mutedDurationMs > beforeDurationMs &&
+        mutedSnapshot!.audioRenderCallbackRate > 0 &&
+        session.audioState != TiRtcAudioOutputState.failed &&
+        _audioErrorCount == 0;
+    if (!outputContinued) {
+      _fail(
+        failureStage: 'audio_output_volume',
+        message: 'audio output did not remain active while muted',
+      );
+      return false;
+    }
+    _markerSink.passed('audio_output_volume_cycle_completed', payload: <String, Object?>{
+      'mute_seconds': 5,
+      'restored_volume_percent': 100,
+      'output_duration_before_ms': beforeDurationMs,
+      'output_duration_muted_ms': mutedDurationMs,
+      'audio_render_callback_rate': mutedSnapshot.audioRenderCallbackRate,
+      'audio_state': session.audioState.name,
+      'audio_error_count': _audioErrorCount,
+    });
+    return true;
+  }
+
   TiRtcOutputBufferStrategy _outputBufferStrategy(DemoExampleSettings settings) {
     return settings.outputBufferPolicy == DemoExampleSettings.outputBufferPolicyNoBuffer
         ? TiRtcOutputBufferStrategy.noBuffer
@@ -485,86 +503,6 @@ class _AutomationPageState extends State<AutomationPage> {
       _markerSink.passed(marker.name, payload: marker.payload);
     }
     return true;
-  }
-
-  Future<void> _runFlutterDeviceServerToCliClient(
-    AutomationPayload payload,
-    DemoExampleSettings settings,
-  ) async {
-    final DemoDeviceServerController controller = DemoDeviceServerController(
-      configuration: DemoDeviceServerConfiguration(
-        endpoint: payload.endpoint ?? '',
-        deviceId: payload.deviceId,
-        deviceSecretKey: payload.deviceSecretKey,
-        videoCodec: DemoDeviceVideoCodec.tryParse(payload.codec) ?? DemoDeviceVideoCodec.h264,
-        audioCodec: DemoDeviceAudioCodec.tryParse(payload.audioCodec) ?? DemoDeviceAudioCodec.g711a,
-        audioSampleRate:
-            DemoDeviceAudioSampleRate.tryParseHertz(payload.audioSampleRateHz) ?? DemoDeviceAudioSampleRate.rate16k,
-        audioChannels:
-            DemoDeviceAudioChannelCount.tryParseCount(payload.audioChannels) ?? DemoDeviceAudioChannelCount.mono,
-        encoderPreference:
-            DemoDeviceEncoderPreference.tryParse(payload.encoderPreference) ?? DemoDeviceEncoderPreference.hardware,
-        settings: settings,
-      ),
-      markerSink: _ScenarioMarkerSink(delegate: _markerSink, payload: payload),
-      renderWindowSeconds: payload.renderWindowSeconds,
-      requestPermissions: _requestCapturePermissionsIfNeeded,
-    );
-    _deviceServerController = controller;
-    controller.addListener(_syncDeviceServerControllerState);
-    _syncDeviceServerControllerState();
-    await controller.start();
-    controller.removeListener(_syncDeviceServerControllerState);
-    _deviceServerController = null;
-    _session = null;
-    _finish();
-  }
-
-  Future<bool> _requestCapturePermissionsIfNeeded() async {
-    final bool isOhos = Platform.operatingSystem == 'ohos';
-    if (!Platform.isAndroid && !isOhos) {
-      return true;
-    }
-
-    final String platformName = isOhos ? 'ohos' : 'android';
-    final bool cameraGranted = await _requestCapturePermission(
-      platformName: platformName,
-      permissionName: 'camera',
-      method: 'requestCameraPermission',
-    );
-    if (!cameraGranted) {
-      return false;
-    }
-    return _requestCapturePermission(
-      platformName: platformName,
-      permissionName: 'microphone',
-      method: 'requestMicrophonePermission',
-    );
-  }
-
-  Future<bool> _requestCapturePermission({
-    required String platformName,
-    required String permissionName,
-    required String method,
-  }) async {
-    TiRtcLogging.i('flutter_example', '${platformName}_${permissionName}_permission_request_started');
-    try {
-      final bool granted = await _permissionChannel.invokeMethod<bool>(method) ?? false;
-      TiRtcLogging.i(
-          'flutter_example', '${platformName}_${permissionName}_permission_request_finished granted=$granted');
-      if (granted) {
-        _markerSink.passed('${permissionName}_permission_granted', payload: <String, Object?>{
-          'platform': platformName,
-        });
-      }
-      return granted;
-    } on PlatformException catch (error) {
-      TiRtcLogging.w(
-        'flutter_example',
-        '${platformName}_${permissionName}_permission_request_failed code=${error.code} message=${error.message ?? ''}',
-      );
-      return false;
-    }
   }
 
   void _bindCallbacks() {
@@ -715,8 +653,8 @@ class _AutomationPageState extends State<AutomationPage> {
         return null;
       }
       final TiRtcVideoOutputMetricsResult metrics = _session!.videoMetrics();
-      final int? firstFrameDurationMs = metrics.snapshot?.startup.firstFrameDurationMs;
-      if (metrics.code == 0 && firstFrameDurationMs != null && firstFrameDurationMs >= 0) {
+      final int? firstOutputDurationMs = metrics.snapshot?.startup.timeToFirstOutputMs;
+      if (metrics.code == 0 && firstOutputDurationMs != null && firstOutputDurationMs >= 0) {
         return metrics;
       }
       await Future<void>.delayed(_stagePollInterval);
@@ -806,17 +744,7 @@ class _AutomationPageState extends State<AutomationPage> {
   }
 
   Future<void> _releaseAutomationResources({required String reason}) async {
-    final DemoDeviceServerController? deviceServerController = _deviceServerController;
-    if (deviceServerController != null) {
-      await deviceServerController.release(reason: reason);
-      await deviceServerController.shutdownRuntime();
-      return;
-    }
-    if (_service != null) {
-      await _releaseServerRoleResources(reason: reason);
-    } else {
-      await _session?.release(reason: reason);
-    }
+    await _session?.release(reason: reason);
     _audioSession.releaseIfNeeded(reason: reason);
   }
 
@@ -833,23 +761,6 @@ class _AutomationPageState extends State<AutomationPage> {
       'returned_to_configure': true,
     });
     return 0;
-  }
-
-  Future<int> _releaseServerRoleResources({required String reason}) async {
-    TiRtcLogging.i('flutter_example', 'server_release_requested reason=$reason');
-    await _session?.detachAndStopLocalInputs();
-    _session?.releaseBoundConnection();
-
-    final TiRtcConnService? service = _service;
-    if (service == null) {
-      return 0;
-    }
-    final int stopCode = service.stop();
-    service.dispose();
-    if (identical(_service, service)) {
-      _service = null;
-    }
-    return stopCode;
   }
 
   Future<void> _disposeSessionAsync() async {
@@ -869,17 +780,6 @@ class _AutomationPageState extends State<AutomationPage> {
       code = TiRtc.shutdown();
     }
     return code;
-  }
-
-  void _syncDeviceServerControllerState() {
-    final DemoDeviceServerController? controller = _deviceServerController;
-    if (controller == null || !mounted) {
-      return;
-    }
-    setState(() {
-      _session = controller.session;
-      _videoRenderingVisible = controller.localPreviewVisible;
-    });
   }
 
   void _setVideoRendering() {
@@ -959,10 +859,7 @@ class _AutomationPageState extends State<AutomationPage> {
         children: <Widget>[
           Positioned.fill(
             child: DownlinkVideoStage(
-              videoView:
-                  widget.parseResult.payload?.scenario == AutomationPayload.scenarioFlutterDeviceServerToCliClient
-                      ? _session?.buildLocalPreview() ?? const SizedBox.expand()
-                      : _session?.buildVideoView() ?? const SizedBox.expand(),
+              videoView: _session?.buildVideoView() ?? const SizedBox.expand(),
               showStageOverlay: !_videoRenderingVisible,
               stageStatusLabel: '加载中',
               indicatorMode: DownlinkCenterIndicatorMode.loading,

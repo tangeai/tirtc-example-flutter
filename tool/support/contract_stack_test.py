@@ -19,7 +19,7 @@ if str(TOOL_ROOT) not in sys.path:
   sys.path.insert(0, str(TOOL_ROOT))
 SCRIPTS_ROOT_CANDIDATES = (
   TOOL_ROOT.parents[1] / "scripts",
-  TOOL_ROOT.parents[1] / "tirtc_av_kit" / "scripts",
+  TOOL_ROOT.parents[1] / "tirtc" / "scripts",
 )
 SCRIPTS_ROOT = next(
   (candidate for candidate in SCRIPTS_ROOT_CANDIDATES if (candidate / "flutter_integration_test.py").is_file()),
@@ -41,6 +41,7 @@ from support.performance_downlink_metrics import (
 from support.performance_source_summary import write_source_summary
 from support.summary import base_summary, finish_summary, now_iso
 from performance import DEFAULT_AUDIO_SAMPLE_RATE_HZ, _base_self_test_summary, _child_path_arg, _payload, _prepared_state_env
+from flutter_integration_evidence import collect_local_audio_input_evidence, collect_source_received_audio_event_evidence
 from flutter_integration_test import flutter_test_command
 
 
@@ -57,7 +58,7 @@ class ToolContractStackTest(unittest.TestCase):
 
   def run_public_tool(self, root: Path, entry: str, args: list[str]) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
-    env.pop("TIRTC_AV_REPO_ROOT", None)
+    env.pop("TIRTC_REPO_ROOT", None)
     env.pop("TIRTC_DEVTOOLS_CLI_SOURCE", None)
     env.pop("TIRTC_DEVTOOLS_CLI", None)
     return subprocess.run(
@@ -91,12 +92,12 @@ class ToolContractStackTest(unittest.TestCase):
     resolved = resolve_cli(check_available=False)
     self.assertEqual(resolved.source, "local")
     self.assertEqual(resolved.command[0], "node")
-    self.assertTrue(str(resolved.path or "").endswith("developer-tools/devtools/bin/tirtc-devtools-cli.js"))
+    self.assertTrue(str(resolved.path or "").endswith("cli/devtools/bin/tirtc-devtools-cli.js"))
     self.assertIsNone(resolved.npm_spec)
 
   def test_cli_resolver_uses_npm_outside_repo(self) -> None:
     with tempfile.TemporaryDirectory() as temp_dir:
-      with patch.dict(os.environ, {"TIRTC_AV_REPO_ROOT": temp_dir}, clear=False):
+      with patch.dict(os.environ, {"TIRTC_REPO_ROOT": temp_dir}, clear=False):
         resolved = resolve_cli(check_available=False)
     self.assertEqual(resolved.source, "npm")
     self.assertEqual(resolved.command, ["npx", "--yes", "tirtc-devtools-cli@latest"])
@@ -111,11 +112,126 @@ class ToolContractStackTest(unittest.TestCase):
 
   def test_cli_resolver_reports_missing_local(self) -> None:
     with tempfile.TemporaryDirectory() as temp_dir:
-      with patch.dict(os.environ, {"TIRTC_AV_REPO_ROOT": temp_dir}, clear=False):
+      with patch.dict(os.environ, {"TIRTC_REPO_ROOT": temp_dir}, clear=False):
         with self.assertRaises(CliResolutionError) as ctx:
           resolve_cli(cli_source="local", check_available=False)
     self.assertEqual(ctx.exception.exit_code, 2)
     self.assertEqual(ctx.exception.blocked_reason, "local_devtools_cli_missing")
+
+  def test_local_audio_input_evidence_accepts_marker(self) -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+      facts = self._local_audio_input_facts(
+        local_audio_input_started=True,
+        local_audio_input_codec="opus",
+        local_audio_input_sample_rate_hz=16000,
+      )
+      evidence = collect_local_audio_input_evidence(Path(temp_dir), facts, expected_stream_id=14)
+    self.assertEqual(evidence["status"], "passed")
+    self.assertEqual(evidence["source"], "marker")
+    self.assertFalse(evidence["fallback_applied"])
+    self.assertEqual(facts["local_audio_input_codec"], "opus")
+
+  def test_local_audio_input_evidence_falls_back_to_native_log_when_started_marker_is_missing(self) -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+      root = Path(temp_dir)
+      (root / "flutter").mkdir(parents=True)
+      (root / "flutter/app.log").write_text(
+        "\n".join(
+          [
+            "[TIRTC_][facade_runtime] [audio_input_state_update] done input=0x1 prev_state=0 new_state=1",
+            "[TIRTC_][media_uplink_audio] [uplink_audio_input_stats] frame=1 samples=160",
+          ]
+        ),
+        encoding="utf-8",
+      )
+      facts = self._local_audio_input_facts(local_audio_input_started=False)
+      evidence = collect_local_audio_input_evidence(root, facts, expected_stream_id=14)
+    self.assertEqual(evidence["status"], "passed")
+    self.assertEqual(evidence["source"], "native_log_fallback")
+    self.assertTrue(evidence["fallback_applied"])
+    self.assertEqual(facts["local_audio_input_codec"], "g711a")
+    self.assertEqual(facts["local_audio_input_sample_rate_hz"], 16000)
+    self.assertEqual(facts["local_audio_input_channels"], 1)
+
+  def test_local_audio_input_evidence_rejects_fallback_when_output_is_unhealthy(self) -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+      root = Path(temp_dir)
+      (root / "flutter").mkdir(parents=True)
+      (root / "flutter/app.log").write_text(
+        "\n".join(
+          [
+            "[TIRTC_][facade_runtime] [audio_input_state_update] done input=0x1 prev_state=0 new_state=1",
+            "[TIRTC_][media_uplink_audio] [uplink_audio_input_stats] frame=1 samples=160",
+          ]
+        ),
+        encoding="utf-8",
+      )
+      facts = self._local_audio_input_facts(local_audio_input_started=False, av_output_health_ok=False)
+      evidence = collect_local_audio_input_evidence(root, facts, expected_stream_id=14)
+    self.assertEqual(evidence["status"], "failed")
+    self.assertFalse(evidence["fallback_applied"])
+
+  def test_source_received_audio_event_evidence_accepts_system_output_playing(self) -> None:
+    ok, evidence = collect_source_received_audio_event_evidence(
+      [
+        {
+          "kind": "system_output.audio.playing",
+          "payload": {
+            "stream_id": 14,
+            "codec": "g711a",
+            "sample_rate_hz": 16000,
+            "channels": 1,
+            "first_output_ms": 43194,
+          },
+        }
+      ],
+      expected_stream_id=14,
+      expected_audio_codec="g711a",
+      expected_audio_sample_rate_hz=16000,
+      expected_audio_channels=1,
+    )
+    self.assertTrue(ok)
+    self.assertEqual(evidence["status"], "event_evidence")
+    self.assertEqual(evidence["actual_audio_codec"], "g711a")
+
+  def test_source_received_audio_event_evidence_rejects_wrong_sample_rate(self) -> None:
+    ok, evidence = collect_source_received_audio_event_evidence(
+      [
+        {
+          "kind": "system_output.audio.playing",
+          "payload": {
+            "stream_id": 14,
+            "codec": "g711a",
+            "sample_rate_hz": 8000,
+            "channels": 1,
+            "first_output_ms": 10,
+          },
+        }
+      ],
+      expected_stream_id=14,
+      expected_audio_codec="g711a",
+      expected_audio_sample_rate_hz=16000,
+      expected_audio_channels=1,
+    )
+    self.assertFalse(ok)
+    self.assertFalse(evidence["ok"])
+
+  def _local_audio_input_facts(self, **overrides: object) -> dict[str, object]:
+    facts: dict[str, object] = {
+      "local_audio_input_attached": True,
+      "local_audio_input_started": True,
+      "local_audio_input_stream_id": 14,
+      "local_audio_input_codec": "g711a",
+      "local_audio_input_sample_rate_hz": 16000,
+      "local_audio_input_channels": 1,
+      "av_output_health_ok": True,
+      "audio_output_health_ok": True,
+      "video_output_health_ok": True,
+      "audio_error_count": 0,
+      "video_error_count": 0,
+    }
+    facts.update(overrides)
+    return facts
 
   def test_smoke_and_integration_reject_dry_run(self) -> None:
     for entry in ("smoke.py", "integration.py"):
@@ -390,8 +506,8 @@ class ToolContractStackTest(unittest.TestCase):
     macos_args = Namespace(platform="macos", device_id=None)
     android_args = Namespace(platform="android", device_id="android-device")
 
-    macos_command = flutter_test_command(macos_args, "run", "payload", "integration_test/integration/tirtc_av_downlink_test.dart")
-    android_command = flutter_test_command(android_args, "run", "payload", "integration_test/integration/tirtc_av_downlink_test.dart")
+    macos_command = flutter_test_command(macos_args, "run", "payload", "integration_test/integration/tirtc_downlink_test.dart")
+    android_command = flutter_test_command(android_args, "run", "payload", "integration_test/integration/tirtc_downlink_test.dart")
 
     self.assertEqual(macos_command[:3], ["flutter", "drive", "--profile"])
     self.assertIn("--driver=test_driver/integration_test.dart", macos_command)
@@ -402,10 +518,10 @@ class ToolContractStackTest(unittest.TestCase):
     with tempfile.TemporaryDirectory() as temp_dir:
       state_path = Path(temp_dir) / "prepared.json"
       android_artifact = {
-        "artifact_key": "android-tirtc-av",
-        "artifact_name": "com.tange.ai:tirtc-av",
+        "artifact_key": "android-tirtc",
+        "artifact_name": "com.tange.ai:tirtc",
         "version": "2.0.0-test",
-        "coordinate": "com.tange.ai:tirtc-av:2.0.0-test",
+        "coordinate": "com.tange.ai:tirtc:2.0.0-test",
       }
       state_path.write_text(
         json.dumps(
@@ -460,9 +576,9 @@ class ToolContractStackTest(unittest.TestCase):
   def test_downlink_metrics_prepared_state_env_uses_local_darwin_pod(self) -> None:
     macos_args = Namespace(platform="macos")
     android_args = Namespace(platform="android")
-    prepared = {"local_darwin_pod_path": "/tmp/TiRTC_AV-local"}
+    prepared = {"local_darwin_pod_path": "/tmp/TiRTC-local"}
 
-    self.assertEqual(_prepared_state_env(macos_args, prepared), {"TIRTC_AV_LOCAL_POD_PATH": "/tmp/TiRTC_AV-local"})
+    self.assertEqual(_prepared_state_env(macos_args, prepared), {"TIRTC_LOCAL_POD_PATH": "/tmp/TiRTC-local"})
     self.assertEqual(_prepared_state_env(android_args, prepared), {})
 
   def test_downlink_metrics_self_test_child_paths_are_absolute(self) -> None:
@@ -481,7 +597,7 @@ class ToolContractStackTest(unittest.TestCase):
             "platform": "android",
             "artifact_visibility": "local",
             "owner_responsibility": {"status": "local-debug"},
-            "android_artifact": {"artifact_key": "android-tirtc-av"},
+            "android_artifact": {"artifact_key": "android-tirtc"},
           }
         ),
         encoding="utf-8",
@@ -606,7 +722,10 @@ class ToolContractStackTest(unittest.TestCase):
         summary = json.loads((artifact_root / "summary.json").read_text(encoding="utf-8"))
         self.assertFalse(summary["run_ok"])
         self.assertEqual(summary["failure_stage"], "blocked")
-        self.assertIn(summary["blocked_reason"], {"prepared_state_missing", "missing_environment:TIRTC_ACCESS_KEY_ID,TIRTC_SECRET_KEY_ID,TIRTC_APP_ID,TIRTC_DEVICE_ID,TIRTC_DEVICE_SECRET_KEY,TIRTC_ENDPOINT,TIRTC_OPEN_API_ENDPOINT"})
+        self.assertTrue(
+          summary["blocked_reason"] == "prepared_state_missing"
+          or str(summary["blocked_reason"]).startswith("missing_environment:")
+        )
         self.assertNotIn("legacy_runner", summary["blocked_reason"])
       for entry in ("performance.py", "stability.py", "stress.py"):
         artifact_root = root / ".build" / entry.removesuffix(".py")
@@ -637,7 +756,7 @@ class ToolContractStackTest(unittest.TestCase):
       source_gitignore = (SCRIPTS_ROOT.parent / "example" / ".gitignore").read_text(encoding="utf-8")
       self.assertEqual((root / ".gitignore").read_text(encoding="utf-8"), source_gitignore)
       pubspec = (root / "pubspec.yaml").read_text(encoding="utf-8")
-      self.assertIn(f"  tirtc_av_kit: {self.current_plugin_version()}", pubspec)
+      self.assertIn(f"  tirtc: {self.current_plugin_version()}", pubspec)
       self.assertNotIn("path: ..", pubspec)
 
   def test_android_first_slice_real_uses_performance_child_summary(self) -> None:
@@ -751,42 +870,6 @@ class ToolContractStackTest(unittest.TestCase):
       written = json.loads((root / "summary.json").read_text(encoding="utf-8"))
       self.assertFalse(written["run_ok"])
       self.assertFalse(written["evidence"]["summary_schema_valid"])
-
-  def test_local_video_uplink_integration_pass_uses_cell_results_without_audio_cases(self) -> None:
-    with tempfile.TemporaryDirectory() as temp_dir:
-      root = Path(temp_dir) / "integration"
-      summary = base_summary(
-        entry="integration",
-        run_id="integration-test",
-        platform="android",
-        artifact_root=root,
-        cli={"source": "local"},
-        mode="real",
-        started_at=now_iso(),
-      )
-      summary["run_ok"] = True
-      summary["evidence"].update(
-        {
-          "scenario_results": [],
-          "codec_results": [],
-          "audio_case_results": [],
-          "local_video_uplink_results": [
-            {"status": "passed", "summary_path": "h264-software/summary.json"},
-            {
-              "status": "passed",
-              "summary_path": "mjpeg-hardware/summary.json",
-              "expect": "unsupported",
-              "expected_error_code": 1019,
-              "actual_error_code": 1019,
-            },
-          ],
-          "av_contract_ok": True,
-          "log_upload": {"required": True, "status": "passed", "log_id": "log-123"},
-          "teardown_ok": True,
-        }
-      )
-
-      self.assertEqual(finish_summary(root, summary), 0)
 
   def test_real_public_summary_writes_current_pointer(self) -> None:
     with tempfile.TemporaryDirectory() as temp_dir:

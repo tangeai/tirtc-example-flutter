@@ -1,16 +1,4 @@
-import 'demo_token_acquisition.dart' as token_acquisition;
-
-export 'demo_token_acquisition.dart'
-    show
-        DemoScanPayload,
-        DemoTokenAcquirer,
-        DemoTokenHttpRequest,
-        DemoTokenHttpResponse,
-        DemoTokenSource,
-        DemoTokenSourceConfiguration,
-        demoTokenIssuerRequest,
-        normalizeDemoConnectionToken,
-        parseDemoTokenIssuerResponse;
+export 'demo_token_acquisition.dart' show DemoScanPayload, DemoTokenAcquirer, normalizeDemoConnectionToken;
 
 final class DemoExampleSettings {
   static const int videoDecoderPreferenceAuto = 0;
@@ -21,6 +9,8 @@ final class DemoExampleSettings {
   static const String localAudioCodecG711a = 'g711a';
   static const String localAudioCodecAac = 'aac';
   static const String localAudioCodecPcm = 'pcm';
+  static const String localAudioCodecOpus = 'opus';
+  static const String localAudioCodecAmr = 'amr';
   static const int localAudioSampleRate8k = 8000;
   static const int localAudioSampleRate16k = 16000;
   static const int defaultLocalAudioStreamId = 14;
@@ -38,6 +28,8 @@ final class DemoExampleSettings {
     localAudioCodecG711a,
     localAudioCodecAac,
     localAudioCodecPcm,
+    localAudioCodecOpus,
+    localAudioCodecAmr,
   };
   static const Set<int> validLocalAudioSampleRates = <int>{
     localAudioSampleRate8k,
@@ -108,7 +100,7 @@ final class DemoExampleSettings {
   }
 
   static bool isValidLocalAudioStreamId(int value) {
-    return value >= 1 && value <= 255;
+    return value >= 0 && value <= 15;
   }
 
   static bool isValidLocalAudioProcessingLevel(int value) {
@@ -134,6 +126,8 @@ final class DemoExampleSettings {
     return switch (value) {
       localAudioCodecAac => 'AAC',
       localAudioCodecPcm => 'PCM',
+      localAudioCodecOpus => 'OPUS',
+      localAudioCodecAmr => 'AMR',
       _ => 'G711A',
     };
   }
@@ -165,8 +159,6 @@ final class DemoDownlinkConfiguration {
     required this.remoteId,
     required this.audioStreamId,
     required this.videoStreamId,
-    required this.tokenSource,
-    required this.tokenIssuerBaseUrl,
     required this.token,
     required this.settings,
   });
@@ -176,20 +168,8 @@ final class DemoDownlinkConfiguration {
   final String remoteId;
   final int audioStreamId;
   final int videoStreamId;
-  final token_acquisition.DemoTokenSource tokenSource;
-  final String tokenIssuerBaseUrl;
   final String token;
   final DemoExampleSettings settings;
-
-  bool get usesTokenIssuer => tokenSource == token_acquisition.DemoTokenSource.issuer;
-
-  token_acquisition.DemoTokenSourceConfiguration get tokenSourceConfiguration {
-    return token_acquisition.DemoTokenSourceConfiguration(
-      source: tokenSource,
-      tokenIssuerBaseUrl: tokenIssuerBaseUrl,
-      oneTimeToken: token,
-    );
-  }
 
   DemoDownlinkConfiguration withToken(String resolvedToken) {
     return DemoDownlinkConfiguration(
@@ -198,180 +178,8 @@ final class DemoDownlinkConfiguration {
       remoteId: remoteId,
       audioStreamId: audioStreamId,
       videoStreamId: videoStreamId,
-      tokenSource: tokenSource,
-      tokenIssuerBaseUrl: tokenIssuerBaseUrl,
       token: resolvedToken,
       settings: settings,
-    );
-  }
-}
-
-String normalizeDemoTokenIssuerBaseUrl(String rawValue) {
-  return token_acquisition.normalizeDemoTokenIssuerBaseUrl(rawValue);
-}
-
-Uri demoTokenIssuerTokenUri(String baseUrl) {
-  return token_acquisition.demoTokenIssuerTokenUri(baseUrl);
-}
-
-enum DemoDeviceCameraFacing {
-  front,
-  back;
-
-  static DemoDeviceCameraFacing? tryParse(String value) {
-    return switch (value.trim()) {
-      'front' => DemoDeviceCameraFacing.front,
-      'back' => DemoDeviceCameraFacing.back,
-      _ => null,
-    };
-  }
-}
-
-enum DemoDeviceVideoCodec {
-  h264,
-  h265,
-  mjpeg;
-
-  static DemoDeviceVideoCodec? tryParse(String value) {
-    return switch (value.trim()) {
-      'h264' => DemoDeviceVideoCodec.h264,
-      'h265' => DemoDeviceVideoCodec.h265,
-      'mjpeg' => DemoDeviceVideoCodec.mjpeg,
-      _ => null,
-    };
-  }
-
-  static DemoDeviceVideoCodec? tryParseConfigurable(String value) {
-    final DemoDeviceVideoCodec? codec = tryParse(value);
-    return codec == DemoDeviceVideoCodec.h265 ? null : codec;
-  }
-}
-
-enum DemoDeviceAudioCodec {
-  g711a,
-  aac,
-  pcm;
-
-  static DemoDeviceAudioCodec? tryParse(String value) {
-    return switch (value.trim()) {
-      'g711a' => DemoDeviceAudioCodec.g711a,
-      'aac' => DemoDeviceAudioCodec.aac,
-      'pcm' => DemoDeviceAudioCodec.pcm,
-      _ => null,
-    };
-  }
-}
-
-enum DemoDeviceAudioSampleRate {
-  rate8k,
-  rate16k;
-
-  int get hertz => switch (this) {
-        DemoDeviceAudioSampleRate.rate8k => 8000,
-        DemoDeviceAudioSampleRate.rate16k => 16000,
-      };
-
-  static DemoDeviceAudioSampleRate? tryParseHertz(int value) {
-    return switch (value) {
-      8000 => DemoDeviceAudioSampleRate.rate8k,
-      16000 => DemoDeviceAudioSampleRate.rate16k,
-      _ => null,
-    };
-  }
-}
-
-enum DemoDeviceAudioChannelCount {
-  mono;
-
-  int get count => switch (this) {
-        DemoDeviceAudioChannelCount.mono => 1,
-      };
-
-  static DemoDeviceAudioChannelCount? tryParseCount(int value) {
-    return switch (value) {
-      1 => DemoDeviceAudioChannelCount.mono,
-      _ => null,
-    };
-  }
-}
-
-enum DemoDeviceEncoderPreference {
-  software,
-  hardware;
-
-  static DemoDeviceEncoderPreference? tryParse(String value) {
-    return switch (value.trim()) {
-      'software' => DemoDeviceEncoderPreference.software,
-      'hardware' => DemoDeviceEncoderPreference.hardware,
-      _ => null,
-    };
-  }
-}
-
-final class DemoDeviceServerConfiguration {
-  static const int defaultAudioStreamId = 10;
-  static const int defaultVideoStreamId = 11;
-  static const int fixedVideoWidth = 1280;
-  static const int fixedVideoHeight = 720;
-  static const int fixedVideoFps = 15;
-  static const int fixedVideoBitrateKbps = 0;
-
-  const DemoDeviceServerConfiguration({
-    required this.endpoint,
-    required this.deviceId,
-    required this.deviceSecretKey,
-    this.cameraFacing = DemoDeviceCameraFacing.back,
-    this.videoCodec = DemoDeviceVideoCodec.h264,
-    this.encoderPreference = DemoDeviceEncoderPreference.hardware,
-    this.audioCodec = DemoDeviceAudioCodec.g711a,
-    this.audioSampleRate = DemoDeviceAudioSampleRate.rate16k,
-    this.audioChannels = DemoDeviceAudioChannelCount.mono,
-    required this.settings,
-  });
-
-  final String endpoint;
-  final String deviceId;
-  final String deviceSecretKey;
-  final DemoDeviceCameraFacing cameraFacing;
-  final DemoDeviceVideoCodec videoCodec;
-  final DemoDeviceEncoderPreference encoderPreference;
-  final DemoDeviceAudioCodec audioCodec;
-  final DemoDeviceAudioSampleRate audioSampleRate;
-  final DemoDeviceAudioChannelCount audioChannels;
-  final DemoExampleSettings settings;
-
-  bool get validCodecBackend =>
-      videoCodec != DemoDeviceVideoCodec.h265 &&
-      (videoCodec != DemoDeviceVideoCodec.mjpeg || encoderPreference == DemoDeviceEncoderPreference.software);
-
-  DemoDeviceServerConfiguration copyWith({
-    String? endpoint,
-    String? deviceId,
-    String? deviceSecretKey,
-    DemoDeviceCameraFacing? cameraFacing,
-    DemoDeviceVideoCodec? videoCodec,
-    DemoDeviceEncoderPreference? encoderPreference,
-    DemoDeviceAudioCodec? audioCodec,
-    DemoDeviceAudioSampleRate? audioSampleRate,
-    DemoDeviceAudioChannelCount? audioChannels,
-    DemoExampleSettings? settings,
-  }) {
-    final DemoDeviceVideoCodec resolvedCodec = videoCodec ?? this.videoCodec;
-    DemoDeviceEncoderPreference resolvedPreference = encoderPreference ?? this.encoderPreference;
-    if (resolvedCodec == DemoDeviceVideoCodec.mjpeg) {
-      resolvedPreference = DemoDeviceEncoderPreference.software;
-    }
-    return DemoDeviceServerConfiguration(
-      endpoint: endpoint ?? this.endpoint,
-      deviceId: deviceId ?? this.deviceId,
-      deviceSecretKey: deviceSecretKey ?? this.deviceSecretKey,
-      cameraFacing: cameraFacing ?? this.cameraFacing,
-      videoCodec: resolvedCodec,
-      encoderPreference: resolvedPreference,
-      audioCodec: audioCodec ?? this.audioCodec,
-      audioSampleRate: audioSampleRate ?? this.audioSampleRate,
-      audioChannels: audioChannels ?? this.audioChannels,
-      settings: settings ?? this.settings,
     );
   }
 }

@@ -1,10 +1,27 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:tirtc_av_kit/tirtc_av_kit.dart';
-import 'package:tirtc_av_kit/src/internal/runtime_bridge.dart';
+import 'package:tirtc_flutter/tirtc_flutter.dart';
+import 'package:tirtc_flutter/src/internal/runtime_bridge.dart';
 
 void main() {
+  test('connect link mode public enum maps to explicit native values', () {
+    final TiRtcRuntimeBridge bridge = TiRtcRuntimeBridge.instance;
+    final List<int> observedModes = <int>[];
+    bridge.setConnectLinkModeProviderForTesting((int mode) {
+      observedModes.add(mode);
+      return 7000 + mode;
+    });
+    addTearDown(() {
+      bridge.setConnectLinkModeProviderForTesting(null);
+    });
+
+    expect(TiRtc.setConnectLinkMode(TiRtcConnectLinkMode.automatic), 7000);
+    expect(TiRtc.setConnectLinkMode(TiRtcConnectLinkMode.directOnly), 7001);
+    expect(TiRtc.setConnectLinkMode(TiRtcConnectLinkMode.relayOnly), 7002);
+    expect(observedModes, <int>[0, 1, 2]);
+  });
+
   test('public error helpers and logging levels are callable', () {
     final TiRtcRuntimeBridge bridge = TiRtcRuntimeBridge.instance;
     bridge.allowNativeLoadFailureForTesting(enabled: true);
@@ -24,16 +41,23 @@ void main() {
     expect(() => TiRtcLogging.e('public_api_test', 'error'), returnsNormally);
 
     const TiRtcAudioOutputOptions audioOptions = TiRtcAudioOutputOptions(
-      volumePercent: 42,
-      agcLevel: 2,
-      ansLevel: 3,
+      agcLevel: TiRtcAudioAgcLevel.medium,
+      ansLevel: TiRtcAudioAnsLevel.high,
       bufferStrategy: TiRtcOutputBufferStrategy.noBuffer,
     );
-    expect(audioOptions.volumePercent, 42);
-    expect(audioOptions.agcLevel, 2);
-    expect(audioOptions.ansLevel, 3);
+    expect(audioOptions.agcLevel, TiRtcAudioAgcLevel.medium);
+    expect(audioOptions.ansLevel, TiRtcAudioAnsLevel.high);
     expect(audioOptions.bufferStrategy, TiRtcOutputBufferStrategy.noBuffer);
     expect(audioOptions.maxBufferWatermarkMs, isNull);
+
+    const TiRtcVideoOutputOptions videoOptions = TiRtcVideoOutputOptions(
+      decoderPreference: TiRtcVideoDecoderPreference.hardware,
+      bufferStrategy: TiRtcOutputBufferStrategy.automatic,
+      maxBufferWatermarkMs: 120,
+    );
+    expect(videoOptions.decoderPreference, TiRtcVideoDecoderPreference.hardware);
+    expect(videoOptions.bufferStrategy, TiRtcOutputBufferStrategy.automatic);
+    expect(videoOptions.maxBufferWatermarkMs, 120);
   });
 
   test('public connection subscription APIs return stable fallback codes', () {
@@ -61,7 +85,13 @@ void main() {
 
     final TiRtcConn connection = TiRtcConn();
     final TiRtcAudioOutput audioOutput = TiRtcAudioOutput();
+    final List<int> observedVolumes = <int>[];
+    bridge.setAudioOutputVolumeProviderForTesting((int outputHandle, int volumePercent) {
+      observedVolumes.add(volumePercent);
+      return kTiRtcErrorOk;
+    });
     addTearDown(() {
+      bridge.setAudioOutputVolumeProviderForTesting(null);
       connection.dispose();
       audioOutput.dispose();
       expect(bridge.shutdown(), kTiRtcErrorOk);
@@ -76,17 +106,23 @@ void main() {
     expect(
       audioOutput.configure(
         const TiRtcAudioOutputOptions(
-          volumePercent: 42,
-          agcLevel: 2,
-          ansLevel: 3,
+          agcLevel: TiRtcAudioAgcLevel.medium,
+          ansLevel: TiRtcAudioAnsLevel.high,
           bufferStrategy: TiRtcOutputBufferStrategy.automatic,
           maxBufferWatermarkMs: 120,
         ),
       ),
       kTiRtcErrorOk,
     );
+    expect(audioOutput.setVolume(0), kTiRtcErrorOk);
+    expect(audioOutput.setVolume(100), kTiRtcErrorOk);
+    expect(observedVolumes, <int>[0, 100]);
+    expect(audioOutput.setVolume(-1), kTiRtcErrorInvalidArgument);
+    expect(audioOutput.setVolume(101), kTiRtcErrorInvalidArgument);
 
     connection.dispose();
     expect(connection.requestKeyFrame(streamId: 11), kTiRtcHostErrorObjectReleased);
+    audioOutput.dispose();
+    expect(audioOutput.setVolume(100), kTiRtcHostErrorObjectReleased);
   });
 }

@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
-import 'package:tirtc_av_kit/tirtc_av_kit.dart';
+import 'package:tirtc_flutter/tirtc_flutter.dart';
 
 import '../demo_configuration.dart';
 import '../demo_downlink_session.dart';
@@ -233,6 +233,8 @@ class DemoPlayerLocalAudioController {
       codec: switch (settings.localAudioCodec) {
         DemoExampleSettings.localAudioCodecAac => TiRtcAudioCodec.aac,
         DemoExampleSettings.localAudioCodecPcm => TiRtcAudioCodec.pcm,
+        DemoExampleSettings.localAudioCodecOpus => TiRtcAudioCodec.opus,
+        DemoExampleSettings.localAudioCodecAmr => TiRtcAudioCodec.amr,
         _ => TiRtcAudioCodec.g711a,
       },
       sampleRate: settings.localAudioSampleRateHz == DemoExampleSettings.localAudioSampleRate8k

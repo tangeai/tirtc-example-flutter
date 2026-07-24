@@ -34,16 +34,6 @@
     ],
     "requestPermissions": [
       {
-        "name": "ohos.permission.CAMERA",
-        "reason": "$string:Camera_permission_reason",
-        "usedScene": {
-          "abilities": [
-            "EntryAbility"
-          ],
-          "when": "inuse"
-        }
-      },
-      {
         "name": "ohos.permission.MICROPHONE",
         "reason": "$string:Microphone_permission_reason",
         "usedScene": {

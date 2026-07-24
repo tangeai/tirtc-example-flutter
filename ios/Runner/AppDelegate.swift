@@ -5,8 +5,8 @@ import UIKit
 
 @main
 @objc class AppDelegate: FlutterAppDelegate {
-  private let preferencesChannelName = "tirtc_av_kit_example/preferences"
-  private let preferencesKeyPrefix = "tirtc_av_kit_example."
+  private let preferencesChannelName = "tirtc_example/preferences"
+  private let preferencesKeyPrefix = "tirtc_example."
   private let localNetworkPermissionTimeoutSeconds: TimeInterval = 12.0
   private var localNetworkBrowser: NWBrowser?
   private var localNetworkPermissionResults: [FlutterResult] = []
@@ -19,7 +19,7 @@ import UIKit
 
     if let controller = window?.rootViewController as? FlutterViewController {
       let channel = FlutterMethodChannel(
-        name: "tirtc_av_kit_example/permissions",
+        name: "tirtc_example/permissions",
         binaryMessenger: controller.binaryMessenger
       )
       channel.setMethodCallHandler { [weak self] call, result in
@@ -32,10 +32,6 @@ import UIKit
           return
         }
         switch call.method {
-        case "checkCameraPermission":
-          result(self.capturePermissionGranted(for: .video))
-        case "requestCameraPermission":
-          self.requestCaptureAccessIfNeeded(for: .video, result: result)
         case "checkMicrophonePermission":
           result(self.capturePermissionGranted(for: .audio))
         case "requestMicrophonePermission":

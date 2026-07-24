@@ -21,7 +21,7 @@ def repo_root() -> Path:
 def find_repo_root() -> Path | None:
   current = Path(__file__).resolve()
   for parent in current.parents:
-    if (parent / "AGENTS.md").is_file() and (parent / "products").is_dir():
+    if (parent / "AGENTS.md").is_file() and (parent / "runtime").is_dir() and (parent / "script").is_dir():
       return parent
   return None
 
@@ -36,6 +36,6 @@ def build_root() -> Path:
 def legacy_scripts_dir() -> Path:
   candidates = (
     plugin_root() / "scripts",
-    plugin_root() / "tirtc_av_kit" / "scripts",
+    plugin_root() / "tirtc" / "scripts",
   )
   return next((candidate for candidate in candidates if candidate.is_dir()), candidates[0])

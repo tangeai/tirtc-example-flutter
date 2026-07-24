@@ -6,9 +6,9 @@ import FlutterMacOS
 import Foundation
 
 import mobile_scanner
-import tirtc_av_kit
+import tirtc_flutter
 
 func RegisterGeneratedPlugins(registry: FlutterPluginRegistry) {
   MobileScannerPlugin.register(with: registry.registrar(forPlugin: "MobileScannerPlugin"))
-  TirtcAvKitPlugin.register(with: registry.registrar(forPlugin: "TirtcAvKitPlugin"))
+  TiRtcPlugin.register(with: registry.registrar(forPlugin: "TiRtcPlugin"))
 }

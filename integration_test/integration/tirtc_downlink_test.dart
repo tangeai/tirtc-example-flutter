@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:tirtc_av_kit_example/src/app_theme.dart';
-import 'package:tirtc_av_kit_example/src/demo_route_lifecycle.dart';
-import 'package:tirtc_av_kit_example/src/pages/configure_page.dart';
+import 'package:tirtc_example/src/app_theme.dart';
+import 'package:tirtc_example/src/demo_route_lifecycle.dart';
+import 'package:tirtc_example/src/pages/configure_page.dart';
 
 import '../support/av_contract_page.dart';
 import '../support/av_contract_payload.dart';
@@ -11,7 +11,7 @@ import '../support/live_frame_policy.dart';
 void main() {
   configureAvContractLiveFramePolicy();
 
-  testWidgets('Flutter device server to CLI client AV contract', (WidgetTester tester) async {
+  testWidgets('cli device to Flutter client AV contract', (WidgetTester tester) async {
     await tester.pumpWidget(
       MaterialApp(
         title: 'Ti RTC AV Integration',

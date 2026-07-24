@@ -36,15 +36,11 @@ class MainFlutterWindow: NSWindow {
 
   private func registerPermissionsChannel(binaryMessenger: FlutterBinaryMessenger) {
     let channel = FlutterMethodChannel(
-      name: "tirtc_av_kit_example/permissions",
+      name: "tirtc_example/permissions",
       binaryMessenger: binaryMessenger
     )
     channel.setMethodCallHandler { call, result in
       switch call.method {
-      case "checkCameraPermission":
-        result(self.capturePermissionGranted(for: .video))
-      case "requestCameraPermission":
-        self.requestCaptureAccessIfNeeded(for: .video, result: result)
       case "checkMicrophonePermission":
         result(self.capturePermissionGranted(for: .audio))
       case "requestMicrophonePermission":
@@ -59,7 +55,7 @@ class MainFlutterWindow: NSWindow {
 
   private func registerPreferencesChannel(binaryMessenger: FlutterBinaryMessenger) {
     let channel = FlutterMethodChannel(
-      name: "tirtc_av_kit_example/preferences",
+      name: "tirtc_example/preferences",
       binaryMessenger: binaryMessenger
     )
     channel.setMethodCallHandler { call, result in
@@ -119,7 +115,7 @@ class MainFlutterWindow: NSWindow {
   ) -> (String, Int)? {
     guard let arguments = rawArguments as? [String: Any],
           let key = arguments["key"] as? String,
-          key.hasPrefix("tirtc_av_kit_example."),
+          key.hasPrefix("tirtc_example."),
           let value = arguments[valueKey] as? Int else {
       result(FlutterError(
         code: "INVALID_ARGUMENT",
@@ -138,7 +134,7 @@ class MainFlutterWindow: NSWindow {
   ) -> (String, String)? {
     guard let arguments = rawArguments as? [String: Any],
           let key = arguments["key"] as? String,
-          key.hasPrefix("tirtc_av_kit_example."),
+          key.hasPrefix("tirtc_example."),
           let value = arguments[valueKey] as? String else {
       result(FlutterError(
         code: "INVALID_ARGUMENT",
@@ -155,12 +151,12 @@ class MainFlutterWindow: NSWindow {
   }
 
   private func requestCaptureAccessIfNeeded(for mediaType: AVMediaType, result: @escaping FlutterResult) {
-    requestCaptureAccessIfNeeded(for: mediaType) { granted in
+    resolveCaptureAccess(for: mediaType) { granted in
       result(granted)
     }
   }
 
-  private func requestCaptureAccessIfNeeded(
+  private func resolveCaptureAccess(
     for mediaType: AVMediaType,
     completion: @escaping (Bool) -> Void
   ) {

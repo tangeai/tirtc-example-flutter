@@ -3,7 +3,7 @@
   "name": "entry",
   "version": "0.2.0",
   "dependencies": {
-    "tirtc_av_kit": "file:../har/tirtc_av_kit.har",
+    "tirtc_flutter": "file:../har/tirtc_flutter.har",
     "@ohos/flutter_ohos": "har/flutter.har",
     "integration_test": "file:../har/integration_test.har"
   }

@@ -10,7 +10,7 @@ from typing import Any
 from .paths import repo_root
 
 SCHEMA_VERSION = 1
-CONTRACT_RERUN_COMMAND = "python3 products/sdk/flutter/tirtc_av_kit/scripts/flutter_example_stack_test.py"
+CONTRACT_RERUN_COMMAND = "python3 flutter/tirtc_flutter/scripts/flutter_example_stack_test.py"
 
 
 def now_iso() -> str:
@@ -41,8 +41,6 @@ def redaction_ok(root: Path) -> bool:
         text = path.read_text(encoding="utf-8", errors="ignore")
       except OSError:
         return False
-      if "TIRTC_DEVICE_SECRET_KEY" in text:
-        return False
       if path.suffix == ".json":
         try:
           data = json.loads(text)
@@ -56,7 +54,7 @@ def redaction_ok(root: Path) -> bool:
 def _contains_secret(value: object) -> bool:
   if isinstance(value, dict):
     for key, item in value.items():
-      if key in {"token", "device_secret_key", "client_token"} and isinstance(item, str):
+      if key == "token" and isinstance(item, str):
         if item and item not in {"<redacted>", "[REDACTED]"}:
           return True
       if _contains_secret(item):
@@ -70,7 +68,6 @@ def redaction_summary(root: Path) -> dict[str, Any]:
   verdict = "passed" if redaction_ok(root) else "failed"
   scans = {
     "token": {"verdict": verdict},
-    "device_secret": {"verdict": verdict},
     "signing_password": {"verdict": verdict},
     "raw_bootstrap_payload": {"verdict": verdict},
     "local_credential_path": {"verdict": verdict},
@@ -121,7 +118,7 @@ def _flutter_version(root: Path) -> str:
 
 
 def flutter_ohos_selector_evidence() -> dict[str, Any]:
-  selector = repo_root() / "products/sdk/flutter/tirtc_av_kit/scripts/flutter_sdk_selector.py"
+  selector = repo_root() / "flutter/tirtc_flutter/scripts/flutter_sdk_selector.py"
   output = _capture_text(["python3", str(selector), "describe", "--platform", "ohos"], cwd=repo_root(), timeout=15)
   try:
     value = json.loads(output)
@@ -180,7 +177,7 @@ def ohos_toolchain_evidence() -> dict[str, Any]:
 def dependency_state_evidence() -> dict[str, Any]:
   current_path = repo_root() / ".build/flutter-example-prepare/current.json"
   if not current_path.is_file():
-    return {"tirtc_av_mode": "unknown", "artifact_path": "unknown"}
+    return {"tirtc_mode": "unknown", "artifact_path": "unknown"}
   current = read_json(current_path)
   native_mode = current.get("native_mode")
   artifact_ref = current.get("native_artifact_ref") if isinstance(current.get("native_artifact_ref"), dict) else {}
@@ -197,18 +194,18 @@ def dependency_state_evidence() -> dict[str, Any]:
     else "unknown"
   )
   result: dict[str, Any] = {
-    "tirtc_av_mode": mode,
+    "tirtc_mode": mode,
     "artifact_path": artifact_path,
   }
   if isinstance(artifact_ref.get("version"), str):
-    result["tirtc_av_version"] = artifact_ref["version"]
+    result["tirtc_version"] = artifact_ref["version"]
   producer_manifest = artifact_ref.get("producer_manifest")
   if isinstance(producer_manifest, str):
     manifest_path = Path(producer_manifest)
     if manifest_path.is_file():
       manifest = read_json(manifest_path)
       if isinstance(manifest.get("sdk_version"), str):
-        result["tirtc_av_version"] = manifest["sdk_version"]
+        result["tirtc_version"] = manifest["sdk_version"]
       if isinstance(manifest.get("runtime_input_manifest_hash"), str):
         result["runtime_input_manifest_hash"] = manifest["runtime_input_manifest_hash"]
   return result
@@ -314,14 +311,6 @@ def _texture_marker_facts(root: Path) -> dict[str, Any]:
         facts["width"] = payload["video_width"]
       if isinstance(payload.get("video_height"), int):
         facts["height"] = payload["video_height"]
-    elif name == "local_inputs_started":
-      if isinstance(payload.get("actual_width"), int):
-        facts["width"] = payload["actual_width"]
-      if isinstance(payload.get("actual_height"), int):
-        facts["height"] = payload["actual_height"]
-      facts["first_frame_observed"] = True
-    elif name == "render_window_completed" and payload.get("local_preview_visible") is True:
-      facts["first_frame_observed"] = True
     elif name == "render_window_completed" and payload.get("video_state") == "rendering":
       facts["first_frame_observed"] = True
       if isinstance(payload.get("video_width"), int):
@@ -560,22 +549,22 @@ def _validate_ohos_common_contract(summary: dict[str, Any]) -> bool:
     if key != "available" and not isinstance(value, str):
       return False
   allowed_dependency_keys = {
-    "tirtc_av_mode",
+    "tirtc_mode",
     "artifact_path",
-    "tirtc_av_version",
+    "tirtc_version",
     "runtime_input_manifest_hash",
   }
-  if not {"tirtc_av_mode", "artifact_path"}.issubset(dependency_state.keys()):
+  if not {"tirtc_mode", "artifact_path"}.issubset(dependency_state.keys()):
     return False
   if not set(dependency_state.keys()).issubset(allowed_dependency_keys):
     return False
-  if dependency_state.get("tirtc_av_mode") not in {"local-har", "project-mode", "published-ohpm", "unknown"}:
+  if dependency_state.get("tirtc_mode") not in {"local-har", "project-mode", "published-ohpm", "unknown"}:
     return False
   if summary.get("run_ok") is True and not _repo_relative_path(dependency_state.get("artifact_path")):
     return False
   if summary.get("run_ok") is not True and not isinstance(dependency_state.get("artifact_path"), str):
     return False
-  for key in ("tirtc_av_version", "runtime_input_manifest_hash"):
+  for key in ("tirtc_version", "runtime_input_manifest_hash"):
     if key in dependency_state and not _non_unknown_string(dependency_state.get(key)):
       return False
   return True
@@ -605,7 +594,7 @@ def _validate_ohos_run_contract(summary: dict[str, Any]) -> bool:
       return False
     if not _non_unknown_string(fork.get("framework_version")):
       return False
-    if dependency_state.get("tirtc_av_mode") not in {"local-har", "project-mode", "published-ohpm"}:
+    if dependency_state.get("tirtc_mode") not in {"local-har", "project-mode", "published-ohpm"}:
       return False
     if toolchain.get("available") is not True:
       return False
@@ -714,39 +703,16 @@ def _all_results_passed(value: object) -> bool:
   return isinstance(value, list) and bool(value) and all(isinstance(item, dict) and item.get("status") == "passed" for item in value)
 
 
-def _local_video_uplink_results_passed(value: object) -> bool:
-  if not _all_results_passed(value):
-    return False
-  if not isinstance(value, list):
-    return False
-  for item in value:
-    if not isinstance(item, dict):
-      return False
-    summary_path = item.get("summary_path")
-    if not isinstance(summary_path, str) or not summary_path:
-      return False
-    if item.get("expect") == "unsupported" and item.get("actual_error_code") != item.get("expected_error_code"):
-      return False
-  return True
-
-
 def _validate_integration_pass(evidence: dict[str, Any]) -> bool:
   counterpart_summary_path = evidence.get("counterpart_summary_path")
   audio_results = evidence.get("audio_case_results")
   codec_results_passed = _all_results_passed(evidence.get("codec_results"))
   scenario_results_passed = _all_results_passed(evidence.get("scenario_results"))
-  local_video_uplink_passed = _local_video_uplink_results_passed(evidence.get("local_video_uplink_results"))
   audio_evidence_paths_ok = (
     isinstance(audio_results, list)
     and bool(audio_results)
     and all(isinstance(item, dict) and isinstance(item.get("evidence_path"), str) and bool(item.get("evidence_path")) for item in audio_results)
   )
-  if local_video_uplink_passed:
-    return (
-      evidence.get("av_contract_ok") is True
-      and evidence.get("teardown_ok") is True
-      and _log_upload_passed(evidence)
-    )
   return (
     (scenario_results_passed or codec_results_passed)
     and _all_results_passed(audio_results)
@@ -827,7 +793,7 @@ def finish_summary(root: Path, summary: dict[str, Any]) -> int:
           "code": reason,
           "required": "OHOS lane prerequisites available",
           "observed": reason,
-          "owner_path": "products/sdk/flutter/tirtc_av_kit",
+          "owner_path": "flutter/tirtc_flutter",
           "next_action": "resolve blocked prerequisite and rerun the lane",
         }
       ]

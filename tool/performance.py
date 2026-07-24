@@ -145,7 +145,6 @@ def _payload(args: argparse.Namespace, run_id: str) -> dict[str, Any]:
     "audio_codec": "g711a",
     "audio_sample_rate_hz": DEFAULT_AUDIO_SAMPLE_RATE_HZ,
     "audio_channels": DEFAULT_AUDIO_CHANNELS,
-    "encoder_preference": "hardware",
     "video_decoder_preference": 0,
     "buffer_policy": "automatic",
     "render_window_seconds": args.duration_seconds,
@@ -206,7 +205,7 @@ def _prepared_state_env(args: argparse.Namespace, prepared: dict[str, Any]) -> d
     return {}
   local_darwin_pod_path = prepared.get("local_darwin_pod_path")
   if isinstance(local_darwin_pod_path, str) and local_darwin_pod_path:
-    return {"TIRTC_AV_LOCAL_POD_PATH": local_darwin_pod_path}
+    return {"TIRTC_LOCAL_POD_PATH": local_darwin_pod_path}
   return {}
 
 
@@ -659,7 +658,7 @@ def _run_case(args: argparse.Namespace) -> int:
     return finish_summary(root, summary)
 
   payload = _payload(args, run_id)
-  command = flutter_test_command(args, run_id, payload_define(payload), "integration_test/integration/tirtc_av_downlink_test.dart")
+  command = flutter_test_command(args, run_id, payload_define(payload), "integration_test/integration/tirtc_downlink_test.dart")
   required_markers = (
     "payload_applied",
     "runtime_initialized",

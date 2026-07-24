@@ -13,9 +13,9 @@ import {
 } from '@ohos/flutter_ohos';
 import { GeneratedPluginRegistrant } from '../plugins/GeneratedPluginRegistrant';
 
-const PERMISSIONS_CHANNEL_NAME = 'tirtc_av_kit_example/permissions';
-const PREFERENCES_CHANNEL_NAME = 'tirtc_av_kit_example/preferences';
-const PREFERENCES_NAME = 'tirtc_av_kit_example_preferences';
+const PERMISSIONS_CHANNEL_NAME = 'tirtc_example/permissions';
+const PREFERENCES_CHANNEL_NAME = 'tirtc_example/preferences';
+const PREFERENCES_NAME = 'tirtc_example_preferences';
 
 class ExamplePermissionsHandler implements MethodCallHandler {
   private readonly context: Context;
@@ -26,12 +26,6 @@ class ExamplePermissionsHandler implements MethodCallHandler {
 
   public onMethodCall(call: MethodCall, result: MethodResult): void {
     switch (call.method) {
-      case 'checkCameraPermission':
-        this.checkPermission('ohos.permission.CAMERA', result);
-        return;
-      case 'requestCameraPermission':
-        this.requestPermission('ohos.permission.CAMERA', result);
-        return;
       case 'checkMicrophonePermission':
         this.checkPermission('ohos.permission.MICROPHONE', result);
         return;

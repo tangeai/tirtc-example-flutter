@@ -24,8 +24,7 @@ allprojects {
         google()
         mavenCentral()
         maven {
-            url = uri("http://repo-sdk.tange-ai.com/repository/maven-public/")
-            isAllowInsecureProtocol = true
+            url = uri("https://repo-sdk.tange-ai.com/repository/maven-public/")
             credentials {
                 username =
                     "tange_user"

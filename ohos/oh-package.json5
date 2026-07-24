@@ -1,15 +1,15 @@
 {
   "modelVersion": "5.0.0",
-  "name": "tirtc-av-kit-example",
+  "name": "tirtc-kit-example",
   "version": "0.2.0-alpha.1",
   "description": "TiRTC Flutter example for OHOS",
   "license": "UNLICENSED",
   "dependencies": {
-    "tirtc_av_kit": "file:../../ohos"
+    "tirtc_flutter": "file:../../ohos"
   },
   "overrides": {
     "integration_test": "file:./har/integration_test.har",
-    "tirtc_av_kit": "file:./har/tirtc_av_kit.har",
+    "tirtc_flutter": "file:./har/tirtc_flutter.har",
     "@ohos/flutter_module": "file:./entry",
     "@ohos/flutter_ohos": "file:./har/flutter.har"
   }

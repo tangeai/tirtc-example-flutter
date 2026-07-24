@@ -13,7 +13,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>tirtc_av_kit_example</string>
+	<string>tirtc_example</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -44,9 +44,9 @@
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>Capture local video for TiRTC example calls.</string>
+	<string>Scan a TiRTC connection token QR code.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Capture local audio for TiRTC example calls.</string>
+	<string>Capture local audio for TiRTC example talkback.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Ti RTC uses local network discovery to trigger iOS network access permission before downlink.</string>
 	<key>NSBonjourServices</key>

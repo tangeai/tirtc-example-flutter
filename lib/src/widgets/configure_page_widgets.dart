@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../app_theme.dart';
-import '../demo_configuration.dart';
 import '../demo_widget_keys.dart';
 import 'token_acquisition_section.dart';
 
@@ -72,9 +71,24 @@ class ConfigureHeader extends StatelessWidget {
     return Row(
       children: <Widget>[
         Expanded(
-          child: Text(
-            'Ti RTC',
-            style: titleStyle,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text(
+                'Ti RTC',
+                style: titleStyle,
+              ),
+              const SizedBox(height: 5),
+              const Text(
+                'Based on Flutter',
+                style: TextStyle(
+                  color: ExampleTheme.textHint,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  height: 1.2,
+                ),
+              ),
+            ],
           ),
         ),
         TextButton(
@@ -101,44 +115,6 @@ class ConfigureHeader extends StatelessWidget {
   }
 }
 
-class ConfigureDeviceEntryLink extends StatelessWidget {
-  const ConfigureDeviceEntryLink({
-    super.key,
-    required this.startingPlayer,
-    required this.onOpenDeviceServer,
-  });
-
-  final bool startingPlayer;
-  final VoidCallback onOpenDeviceServer;
-
-  @override
-  Widget build(BuildContext context) {
-    final Color textColor = startingPlayer ? ExampleTheme.textHint : ExampleTheme.textSecondary;
-    return TextButton(
-      key: DemoWidgetKeys.openDeviceServerButton,
-      onPressed: startingPlayer ? null : onOpenDeviceServer,
-      style: TextButton.styleFrom(
-        foregroundColor: textColor,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        minimumSize: const Size(0, 36),
-        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      ),
-      child: Text(
-        '或者，将本机作为设备端启动',
-        textAlign: TextAlign.center,
-        style: TextStyle(
-          color: textColor,
-          fontSize: 13,
-          fontStyle: FontStyle.italic,
-          fontWeight: FontWeight.w700,
-          decoration: TextDecoration.underline,
-          decorationColor: textColor,
-        ),
-      ),
-    );
-  }
-}
-
 class ConfigureForm extends StatelessWidget {
   const ConfigureForm({
     super.key,
@@ -150,14 +126,10 @@ class ConfigureForm extends StatelessWidget {
     required this.remoteIdController,
     required this.audioStreamIdController,
     required this.videoStreamIdController,
-    required this.tokenSource,
-    required this.tokenIssuerBaseUrlController,
     required this.tokenController,
     required this.validateEndpoint,
     required this.validateStreamId,
-    required this.validateTokenIssuerBaseUrl,
     required this.validateOneTimeToken,
-    required this.onTokenSourceChanged,
     required this.scanSupported,
     required this.onScanToken,
     required this.onStartPlaying,
@@ -171,14 +143,10 @@ class ConfigureForm extends StatelessWidget {
   final TextEditingController remoteIdController;
   final TextEditingController audioStreamIdController;
   final TextEditingController videoStreamIdController;
-  final DemoTokenSource tokenSource;
-  final TextEditingController tokenIssuerBaseUrlController;
   final TextEditingController tokenController;
   final FormFieldValidator<String> validateEndpoint;
   final FormFieldValidator<String> validateStreamId;
-  final FormFieldValidator<String> validateTokenIssuerBaseUrl;
   final FormFieldValidator<String> validateOneTimeToken;
-  final ValueChanged<DemoTokenSource> onTokenSourceChanged;
   final bool scanSupported;
   final VoidCallback onScanToken;
   final VoidCallback onStartPlaying;
@@ -191,7 +159,7 @@ class ConfigureForm extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          _AppIdEndpointRow(
+          _EndpointAndAppIdFields(
             appIdController: appIdController,
             endpointController: endpointController,
             enabled: !startingPlayer,
@@ -208,14 +176,10 @@ class ConfigureForm extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           ConfigureTokenAcquisitionSection(
-            source: tokenSource,
-            tokenIssuerBaseUrlController: tokenIssuerBaseUrlController,
             tokenController: tokenController,
             enabled: !startingPlayer,
             scanSupported: scanSupported,
-            validateTokenIssuerBaseUrl: validateTokenIssuerBaseUrl,
             validateOneTimeToken: validateOneTimeToken,
-            onSourceChanged: onTokenSourceChanged,
             onScanToken: onScanToken,
           ),
           const SizedBox(height: 20),
@@ -230,8 +194,8 @@ class ConfigureForm extends StatelessWidget {
   }
 }
 
-class _AppIdEndpointRow extends StatelessWidget {
-  const _AppIdEndpointRow({
+class _EndpointAndAppIdFields extends StatelessWidget {
+  const _EndpointAndAppIdFields({
     required this.appIdController,
     required this.endpointController,
     required this.enabled,
@@ -245,22 +209,16 @@ class _AppIdEndpointRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
-        Expanded(
-          flex: 1,
-          child: _AppIdField(controller: appIdController, enabled: enabled),
+        _EndpointField(
+          controller: endpointController,
+          enabled: enabled,
+          validator: validateEndpoint,
         ),
-        const SizedBox(width: 12),
-        Expanded(
-          flex: 2,
-          child: _EndpointField(
-            controller: endpointController,
-            enabled: enabled,
-            validator: validateEndpoint,
-          ),
-        ),
+        const SizedBox(height: 16),
+        _AppIdField(controller: appIdController, enabled: enabled),
       ],
     );
   }
@@ -345,7 +303,7 @@ class _RemoteIdField extends StatelessWidget {
       style: const TextStyle(fontSize: 13),
       decoration: const InputDecoration(
         labelText: 'remote_id',
-        hintText: '待连接的远端目标 ID',
+        hintText: '待连接的设备 ID',
       ),
       validator: (String? value) {
         if ((value ?? '').trim().isEmpty) {
@@ -418,7 +376,7 @@ class _EnterPlayerButtonLabel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (!startingPlayer) {
-      return const Text('进入播放页面');
+      return const Text('开始连接、拉流播放');
     }
 
     return const Row(

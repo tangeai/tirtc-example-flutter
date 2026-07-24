@@ -3,7 +3,7 @@ import FlutterMacOS
 import XCTest
 
 
-@testable import tirtc_av_kit
+@testable import tirtc_flutter
 
 // This demonstrates a simple unit test of the Swift portion of this plugin's implementation.
 //
@@ -12,7 +12,7 @@ import XCTest
 class RunnerTests: XCTestCase {
 
   func testGetPlatformVersion() {
-    let plugin = TirtcAvKitPlugin()
+    let plugin = TiRtcPlugin()
 
     let call = FlutterMethodCall(methodName: "getPlatformVersion", arguments: [])
 

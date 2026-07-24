@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:tirtc_av_kit/tirtc_av_kit.dart';
+import 'package:tirtc_flutter/tirtc_flutter.dart';
 
 import '../app_theme.dart';
 import '../demo_configuration.dart';
@@ -57,6 +57,7 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
   bool _shouldKeepPlaying = true;
   int _sessionGeneration = 0;
   bool _commandConnected = false;
+  bool _audioMuted = false;
   bool _smokeConnectedMarked = false;
   bool _smokeAudioPlayingMarked = false;
   bool _smokeVideoRenderingMarked = false;
@@ -189,25 +190,10 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
 
     _bindSessionCallbacks(generation: generation);
 
-    final int connectCode = _session.connect(
-      remoteId: widget.configuration.remoteId,
-      token: widget.configuration.token,
-    );
-    if (connectCode != 0) {
-      _clearSessionCallbacks();
-      _handleFailure(
-        generation: generation,
-        label: _connectionErrorLabel(connectCode),
-        summary: 'Connection setup failed with ${TiRtc.formatError(connectCode)}.',
-      );
-      return;
-    }
-
     final TiRtcOutputBufferStrategy outputBufferStrategy = _outputBufferStrategy(widget.configuration.settings);
     final int audioOptionsCode = _session.setAudioOptions(bufferStrategy: outputBufferStrategy);
     if (audioOptionsCode != 0) {
       _clearSessionCallbacks();
-      _session.disconnectConnection();
       _handleFailure(
         generation: generation,
         label: _downlinkErrorLabel(audioOptionsCode),
@@ -219,7 +205,6 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     final int audioAttachCode = _session.attachAudio(streamId: widget.configuration.audioStreamId);
     if (audioAttachCode != 0) {
       _clearSessionCallbacks();
-      _session.disconnectConnection();
       _handleFailure(
         generation: generation,
         label: _downlinkErrorLabel(audioAttachCode),
@@ -243,8 +228,6 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     );
     if (!videoAttachResult.optionsApplied) {
       _clearSessionCallbacks();
-      _session.detachAudio();
-      _session.disconnectConnection();
       _handleFailure(
         generation: generation,
         label: _downlinkErrorLabel(videoAttachResult.optionsCode),
@@ -256,8 +239,6 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     final int videoAttachCode = videoAttachResult.attachCode ?? 0;
     if (videoAttachCode != 0) {
       _clearSessionCallbacks();
-      _session.detachAudio();
-      _session.disconnectConnection();
       _handleFailure(
         generation: generation,
         label: _downlinkErrorLabel(videoAttachCode),
@@ -269,6 +250,20 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     if (!_acceptGeneration(generation)) {
       _clearSessionCallbacks();
       await _releaseSession(reason: 'stale_start');
+      return;
+    }
+
+    final int connectCode = _session.connect(
+      remoteId: widget.configuration.remoteId,
+      token: widget.configuration.token,
+    );
+    if (connectCode != 0) {
+      _clearSessionCallbacks();
+      _handleFailure(
+        generation: generation,
+        label: _connectionErrorLabel(connectCode),
+        summary: 'Connection setup failed with ${TiRtc.formatError(connectCode)}.',
+      );
       return;
     }
 
@@ -528,6 +523,32 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     }
 
     if (state == TiRtcConnState.connected) {
+      final int audioStreamId = widget.configuration.audioStreamId;
+      final int audioSubscribeCode = _session.subscribeAudio(streamId: audioStreamId);
+      if (audioSubscribeCode != 0) {
+        _handleFailure(
+          generation: generation,
+          label: _connectionErrorLabel(audioSubscribeCode),
+          summary: 'Audio subscribe failed for stream $audioStreamId with ${TiRtc.formatError(audioSubscribeCode)}.',
+        );
+        return;
+      }
+
+      final int videoStreamId = widget.configuration.videoStreamId;
+      final int videoSubscribeCode = _session.subscribeVideo(streamId: videoStreamId);
+      if (videoSubscribeCode != 0) {
+        _handleFailure(
+          generation: generation,
+          label: _connectionErrorLabel(videoSubscribeCode),
+          summary: 'Video subscribe failed for stream $videoStreamId with ${TiRtc.formatError(videoSubscribeCode)}.',
+        );
+        return;
+      }
+
+      TiRtcLogging.i(
+        'flutter_example',
+        'remote_media_subscribed audio_stream_id=$audioStreamId video_stream_id=$videoStreamId',
+      );
       _smokePassOnce(
         marker: 'smoke_connected',
         marked: _smokeConnectedMarked,
@@ -711,10 +732,10 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
           return;
         }
         final TiRtcVideoOutputMetricsResult metrics = _session.videoMetrics();
-        final int? firstFrameDurationMs = metrics.snapshot?.startup.firstFrameDurationMs;
-        if (metrics.code == 0 && firstFrameDurationMs != null && firstFrameDurationMs >= 0) {
+        final int? firstOutputDurationMs = metrics.snapshot?.startup.timeToFirstOutputMs;
+        if (metrics.code == 0 && firstOutputDurationMs != null && firstOutputDurationMs >= 0) {
           widget.smokeMarkerSink?.passed('smoke_video_rendering', payload: <String, Object?>{
-            'first_frame_duration_ms': firstFrameDurationMs,
+            'first_frame_duration_ms': firstOutputDurationMs,
           });
           return;
         }
@@ -878,6 +899,12 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
                       alignment: WrapAlignment.end,
                       crossAxisAlignment: WrapCrossAlignment.center,
                       children: <Widget>[
+                        AudioOutputVolumeButton(
+                          key: DemoWidgetKeys.playerAudioVolumeButton,
+                          enabled: _commandConnected,
+                          muted: _audioMuted,
+                          onPressed: _toggleAudioOutputVolume,
+                        ),
                         LocalAudioControlButton(
                           key: DemoWidgetKeys.playerLocalAudioButton,
                           enabled: _commandConnected,
@@ -915,6 +942,31 @@ class _DemoPlayerPageState extends State<DemoPlayerPage>
     }
 
     unawaited(_startDownlink(reason: 'manual_start'));
+  }
+
+  void _toggleAudioOutputVolume() {
+    final bool nextMuted = !_audioMuted;
+    final int volumePercent = nextMuted ? 0 : 100;
+    final int code = _session.setAudioOutputVolume(volumePercent);
+    if (code != 0) {
+      _showPlayerSnack('音量设置失败 · ${TiRtc.formatError(code)}');
+      _smokeFail(
+        failureStage: 'audio_output_volume',
+        message: 'audio output volume update failed',
+        errorCode: code,
+      );
+      return;
+    }
+    setState(() {
+      _audioMuted = nextMuted;
+    });
+    widget.smokeMarkerSink?.passed(
+      nextMuted ? 'smoke_audio_output_muted' : 'smoke_audio_output_restored',
+      payload: <String, Object?>{
+        'volume_percent': volumePercent,
+        'audio_state': _session.audioState.name,
+      },
+    );
   }
 
   void _showPlayerSnack(String message) {

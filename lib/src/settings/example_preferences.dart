@@ -13,7 +13,7 @@ abstract interface class DemoExamplePreferences {
 final class MethodChannelDemoExamplePreferences implements DemoExamplePreferences {
   const MethodChannelDemoExamplePreferences();
 
-  static const MethodChannel _channel = MethodChannel('tirtc_av_kit_example/preferences');
+  static const MethodChannel _channel = MethodChannel('tirtc_example/preferences');
 
   @override
   Future<int> getInt({required String key, required int defaultValue}) async {

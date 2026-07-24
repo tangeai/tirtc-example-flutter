@@ -1,5 +1,7 @@
 source 'https://github.com/CocoaPods/Specs.git'
 
+require 'pathname'
+
 platform :osx, '11.5'
 
 # CocoaPods analytics sends network stats synchronously affecting flutter build latency.
@@ -31,9 +33,12 @@ flutter_macos_podfile_setup
 target 'Runner' do
   use_frameworks!
 
-  local_tirtc_av_pod_path = ENV['TIRTC_AV_LOCAL_POD_PATH']
-  unless local_tirtc_av_pod_path.nil? || local_tirtc_av_pod_path.empty?
-    pod 'TiRTC_AV', :path => File.expand_path(local_tirtc_av_pod_path)
+  local_tirtc_pod_path = ENV['TIRTC_LOCAL_POD_PATH']
+  unless local_tirtc_pod_path.nil? || local_tirtc_pod_path.empty?
+    relative_tirtc_pod_path = Pathname.new(File.expand_path(local_tirtc_pod_path))
+      .relative_path_from(Pathname.new(__dir__))
+      .to_s
+    pod 'TiRTC', :path => relative_tirtc_pod_path
   end
 
   flutter_install_all_macos_pods File.dirname(File.realpath(__FILE__))
@@ -45,10 +50,5 @@ end
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_macos_build_settings(target)
-
-    target.build_configurations.each do |config|
-      config.build_settings['ARCHS[sdk=macosx*]'] = 'arm64'
-      config.build_settings['ONLY_ACTIVE_ARCH'] = 'YES'
-    end
   end
 end

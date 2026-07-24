@@ -3,9 +3,8 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:tirtc_av_kit/tirtc_av_kit.dart';
+import 'package:tirtc_flutter/tirtc_flutter.dart';
 
-import '../device/device_configure_page.dart';
 import '../demo_configuration.dart';
 import '../demo_permissions.dart';
 import '../demo_test_hooks.dart';
@@ -39,7 +38,6 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
   final TextEditingController _remoteIdController = TextEditingController();
   final TextEditingController _audioStreamIdController = TextEditingController();
   final TextEditingController _videoStreamIdController = TextEditingController();
-  final TextEditingController _tokenIssuerBaseUrlController = TextEditingController();
   final TextEditingController _tokenController = TextEditingController();
   final DemoTokenAcquirer _tokenAcquirer = const DemoTokenAcquirer();
   final DemoExamplePermissions _permissions = const DemoExamplePermissions();
@@ -48,7 +46,6 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
 
   bool _submitted = false;
   bool _startingPlayer = false;
-  DemoTokenSource _tokenSource = DemoTokenSource.issuer;
   DemoExampleSettings _settings = const DemoExampleSettings();
   bool _iosLocalNetworkPermissionReady = false;
   Future<bool>? _iosLocalNetworkPermissionRequest;
@@ -76,7 +73,6 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
     _remoteIdController.dispose();
     _audioStreamIdController.dispose();
     _videoStreamIdController.dispose();
-    _tokenIssuerBaseUrlController.dispose();
     _tokenController.dispose();
     _configurationSaveDebounce?.cancel();
     super.dispose();
@@ -115,22 +111,13 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
                         remoteIdController: _remoteIdController,
                         audioStreamIdController: _audioStreamIdController,
                         videoStreamIdController: _videoStreamIdController,
-                        tokenSource: _tokenSource,
-                        tokenIssuerBaseUrlController: _tokenIssuerBaseUrlController,
                         tokenController: _tokenController,
                         validateEndpoint: _validateEndpoint,
                         validateStreamId: _validateStreamId,
-                        validateTokenIssuerBaseUrl: _validateTokenIssuerBaseUrl,
                         validateOneTimeToken: _validateOneTimeToken,
-                        onTokenSourceChanged: _selectTokenSource,
                         scanSupported: _scanSupported,
                         onScanToken: _scanToken,
                         onStartPlaying: _startPlaying,
-                      ),
-                      const SizedBox(height: 14),
-                      ConfigureDeviceEntryLink(
-                        startingPlayer: _startingPlayer,
-                        onOpenDeviceServer: _openDeviceServer,
                       ),
                     ],
                   ),
@@ -158,26 +145,7 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
     return null;
   }
 
-  String? _validateTokenIssuerBaseUrl(String? value) {
-    if (_tokenSource != DemoTokenSource.issuer) {
-      return null;
-    }
-    final String tokenIssuerBaseUrl = (value ?? '').trim();
-    if (tokenIssuerBaseUrl.isEmpty) {
-      return '请填写 Token 签发服务地址。';
-    }
-    try {
-      normalizeDemoTokenIssuerBaseUrl(tokenIssuerBaseUrl);
-    } on FormatException {
-      return '请输入完整的 http(s) Token 签发服务地址，或直接返回 v1 Token 的 URL。';
-    }
-    return null;
-  }
-
   String? _validateOneTimeToken(String? value) {
-    if (_tokenSource != DemoTokenSource.oneTime) {
-      return null;
-    }
     try {
       normalizeDemoConnectionToken(value ?? '');
     } on FormatException {
@@ -241,11 +209,7 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
         controller: _videoStreamIdController,
         fallback: DemoDownlinkConfiguration.defaultVideoStreamId,
       ),
-      tokenSource: _tokenSource,
-      tokenIssuerBaseUrl: _tokenSource == DemoTokenSource.issuer
-          ? normalizeDemoTokenIssuerBaseUrl(_tokenIssuerBaseUrlController.text)
-          : '',
-      token: _tokenSource == DemoTokenSource.oneTime ? normalizeDemoConnectionToken(_tokenController.text) : '',
+      token: normalizeDemoConnectionToken(_tokenController.text),
       settings: _settings,
     );
   }
@@ -302,7 +266,7 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
       'flutter_example',
       'runtime_initialize_requested appIdPresent=${resolvedConfiguration.appId.isNotEmpty} '
           'endpoint=${resolvedConfiguration.endpoint} remoteId=${resolvedConfiguration.remoteId} '
-          'tokenSource=${resolvedConfiguration.tokenSource.name}',
+          'tokenPresent=${resolvedConfiguration.token.isNotEmpty}',
     );
     final int initializeCode = await TiRtc.initialize(
       TiRtcInitOptions(
@@ -375,12 +339,11 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
     DemoDownlinkConfiguration configuration,
   ) async {
     final String token = await _tokenAcquirer.resolve(
-      configuration: configuration.tokenSourceConfiguration,
-      remoteId: configuration.remoteId,
+      token: configuration.token,
     );
     TiRtcLogging.i(
       'flutter_example',
-      'token_resolved source=${configuration.tokenSource.name} remoteId=${configuration.remoteId}',
+      'token_resolved remoteId=${configuration.remoteId}',
     );
     return configuration.withToken(token);
   }
@@ -399,19 +362,6 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
       return;
     }
     await _loadSettingsSnapshot(reason: 'settings_return');
-    _applyConfigurePageSystemOverlayStyle();
-  }
-
-  Future<void> _openDeviceServer() async {
-    _dismissKeyboard();
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
-        builder: (BuildContext context) => const DemoDeviceServerConfigurePage(),
-      ),
-    );
-    if (!mounted) {
-      return;
-    }
     _applyConfigurePageSystemOverlayStyle();
   }
 
@@ -439,7 +389,6 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
       _remoteIdController,
       _audioStreamIdController,
       _videoStreamIdController,
-      _tokenIssuerBaseUrlController,
     ]) {
       controller.addListener(_scheduleConfigurationSave);
     }
@@ -456,26 +405,12 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
     _remoteIdController.text = snapshot.remoteId;
     _audioStreamIdController.text = snapshot.audioStreamId;
     _videoStreamIdController.text = snapshot.videoStreamId;
-    _tokenIssuerBaseUrlController.text = snapshot.tokenIssuerBaseUrl;
-    setState(() {
-      _tokenSource = DemoTokenSource.issuer;
-    });
     _applyingStoredConfiguration = false;
     TiRtcLogging.i(
       'flutter_example',
       'downlink_configuration_loaded appIdPresent=${snapshot.appId.isNotEmpty} '
-          'endpoint=${snapshot.endpoint} remoteId=${snapshot.remoteId} '
-          'tokenIssuerBaseUrlPresent=${snapshot.tokenIssuerBaseUrl.isNotEmpty}',
+          'endpoint=${snapshot.endpoint} remoteId=${snapshot.remoteId}',
     );
-  }
-
-  void _selectTokenSource(DemoTokenSource source) {
-    if (_tokenSource == source || _startingPlayer) {
-      return;
-    }
-    setState(() {
-      _tokenSource = source;
-    });
   }
 
   Future<void> _scanToken() async {
@@ -494,7 +429,6 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
     }
 
     setState(() {
-      _tokenSource = DemoTokenSource.oneTime;
       _tokenController.text = payload.token;
       if (payload.appId != null) {
         _appIdController.text = payload.appId!;
@@ -537,7 +471,6 @@ class _DemoConfigurePageState extends State<DemoConfigurePage> with WidgetsBindi
       remoteId: _remoteIdController.text.trim(),
       audioStreamId: _audioStreamIdController.text.trim(),
       videoStreamId: _videoStreamIdController.text.trim(),
-      tokenIssuerBaseUrl: _tokenIssuerBaseUrlController.text.trim(),
     );
   }
 

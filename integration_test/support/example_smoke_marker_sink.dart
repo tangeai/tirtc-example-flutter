@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'package:tirtc_av_kit_example/src/demo_test_hooks.dart';
+import 'package:tirtc_example/src/demo_test_hooks.dart';
 
 const int _markerChunkLength = 480;
 

@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:tirtc_av_kit_example/src/widgets/downlink_metrics_overlay_model.dart';
+import 'package:tirtc_example/src/widgets/downlink_metrics_overlay_model.dart';
 
 import 'av_contract_payload.dart';
 

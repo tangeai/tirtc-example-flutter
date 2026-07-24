@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/widgets.dart';
-import 'package:tirtc_av_kit/tirtc_av_kit.dart';
+import 'package:tirtc_flutter/tirtc_flutter.dart';
 
 import 'demo_call_command.dart';
 import 'widgets/downlink_metrics_overlay_model.dart';
@@ -14,45 +14,23 @@ final class DemoDownlinkSession {
       : _connection = connection ?? TiRtcConn(),
         _audioOutput = TiRtcAudioOutput(),
         _videoOutput = TiRtcVideoOutput(),
-        _audioInput = TiRtcAudioInput(),
-        _videoInput = TiRtcVideoInput();
+        _audioInput = TiRtcAudioInput();
 
-  DemoDownlinkSession.localInputsOnly()
-      : _connection = null,
-        _audioOutput = null,
-        _videoOutput = null,
-        _audioInput = TiRtcAudioInput(),
-        _videoInput = TiRtcVideoInput();
-
-  TiRtcConn? _connection;
-  final TiRtcAudioOutput? _audioOutput;
-  final TiRtcVideoOutput? _videoOutput;
+  final TiRtcConn _connection;
+  final TiRtcAudioOutput _audioOutput;
+  final TiRtcVideoOutput _videoOutput;
   final TiRtcAudioInput _audioInput;
-  final TiRtcVideoInput _videoInput;
-  final Set<TiRtcConn> _localAudioConnections = <TiRtcConn>{};
-  final Set<TiRtcConn> _localVideoConnections = <TiRtcConn>{};
   Future<void>? _releaseInFlight;
+  bool _localAudioAttached = false;
+  int? _subscribedAudioStreamId;
+  int? _subscribedVideoStreamId;
   bool _released = false;
   bool _disposed = false;
 
-  Widget buildVideoView() {
-    return _videoOutput!.view();
-  }
-
-  Widget buildLocalPreview() {
-    return _videoInput.preview();
-  }
-
-  void bindAcceptedConnection(TiRtcConn connection) {
-    if (_connection != null) {
-      throw StateError('connection already bound');
-    }
-    _connection = connection;
-    _released = false;
-  }
+  Widget buildVideoView() => _videoOutput.view();
 
   void setCommandCallback(TiRtcOnConnCommand? onCommand) {
-    _connection?.onCommand = onCommand;
+    _connection.onCommand = onCommand;
   }
 
   void bindCallbacks({
@@ -65,57 +43,35 @@ final class DemoDownlinkSession {
     TiRtcOnConnCommand? onCommand,
     TiRtcOnInputStateChanged? onAudioInputStateChanged,
     TiRtcOnInputError? onAudioInputError,
-    TiRtcOnInputStateChanged? onVideoInputStateChanged,
-    TiRtcOnVideoInputActualConfigChanged? onVideoInputActualConfigChanged,
-    TiRtcOnInputError? onVideoInputError,
     TiRtcOnConnStreamMessage? onStreamMessage,
   }) {
-    final TiRtcConn? connection = _connection;
-    if (connection != null) {
-      connection.onStateChanged = onConnectionStateChanged;
-      connection.onCommand = onCommand;
-      connection.onStreamMessage = onStreamMessage;
-    }
-    _audioOutput?.onStateChanged = onAudioStateChanged;
-    _audioOutput?.onError = onAudioError;
-    _videoOutput?.onStateChanged = onVideoStateChanged;
-    _videoOutput?.onRenderSizeChanged = onVideoRenderSizeChanged;
-    _videoOutput?.onError = onVideoError;
+    _connection.onStateChanged = onConnectionStateChanged;
+    _connection.onCommand = onCommand;
+    _connection.onStreamMessage = onStreamMessage;
+    _audioOutput.onStateChanged = onAudioStateChanged;
+    _audioOutput.onError = onAudioError;
+    _videoOutput.onStateChanged = onVideoStateChanged;
+    _videoOutput.onRenderSizeChanged = onVideoRenderSizeChanged;
+    _videoOutput.onError = onVideoError;
     _audioInput.onStateChanged = onAudioInputStateChanged;
     _audioInput.onError = onAudioInputError;
-    _videoInput.onStateChanged = onVideoInputStateChanged;
-    _videoInput.onActualConfigChanged = onVideoInputActualConfigChanged;
-    _videoInput.onError = onVideoInputError;
   }
 
   void clearCallbacks() {
-    final TiRtcConn? connection = _connection;
-    if (connection != null) {
-      connection.onStateChanged = null;
-      connection.onCommand = null;
-      connection.onStreamMessage = null;
-    }
-    _audioOutput?.onStateChanged = null;
-    _audioOutput?.onError = null;
-    _videoOutput?.onStateChanged = null;
-    _videoOutput?.onRenderSizeChanged = null;
-    _videoOutput?.onError = null;
+    _connection.onStateChanged = null;
+    _connection.onCommand = null;
+    _connection.onStreamMessage = null;
+    _audioOutput.onStateChanged = null;
+    _audioOutput.onError = null;
+    _videoOutput.onStateChanged = null;
+    _videoOutput.onRenderSizeChanged = null;
+    _videoOutput.onError = null;
     _audioInput.onStateChanged = null;
     _audioInput.onError = null;
-    _videoInput.onStateChanged = null;
-    _videoInput.onActualConfigChanged = null;
-    _videoInput.onError = null;
   }
 
-  int connect({
-    required String remoteId,
-    required String token,
-  }) {
-    final TiRtcConn? connection = _connection;
-    if (connection == null) {
-      return _tiRtcErrorInvalidArgument;
-    }
-    final int code = connection.connect(remoteId: remoteId, token: token);
+  int connect({required String remoteId, required String token}) {
+    final int code = _connection.connect(remoteId: remoteId, token: token);
     if (code == 0) {
       _released = false;
     }
@@ -123,78 +79,71 @@ final class DemoDownlinkSession {
   }
 
   int attachAudio({required int streamId}) {
-    final TiRtcConn? connection = _connection;
-    if (connection == null) {
-      return _tiRtcErrorInvalidArgument;
-    }
-    final TiRtcAudioOutput? audioOutput = _audioOutput;
-    if (audioOutput == null) {
-      return _tiRtcErrorInvalidArgument;
-    }
-    return audioOutput.attach(connection: connection, streamId: streamId);
+    return _audioOutput.attach(connection: _connection, streamId: streamId);
   }
 
   int setAudioOptions({required TiRtcOutputBufferStrategy bufferStrategy}) {
-    final TiRtcAudioOutput? audioOutput = _audioOutput;
-    if (audioOutput == null) {
-      return _tiRtcErrorInvalidArgument;
-    }
-    return audioOutput.configure(
+    return _audioOutput.configure(
       TiRtcAudioOutputOptions(bufferStrategy: bufferStrategy),
     );
+  }
+
+  int setAudioOutputVolume(int volumePercent) {
+    return _audioOutput.setVolume(volumePercent);
   }
 
   int setVideoOptions({
     required int decoderPreference,
     required TiRtcOutputBufferStrategy bufferStrategy,
   }) {
-    final TiRtcVideoOutput? videoOutput = _videoOutput;
-    if (videoOutput == null) {
-      return _tiRtcErrorInvalidArgument;
-    }
-    return videoOutput.setOptions(
+    return _videoOutput.setOptions(
       TiRtcVideoOutputOptions(
-        decoderPreference: decoderPreference,
+        decoderPreference: _videoDecoderPreferenceFromNativeValue(
+          decoderPreference,
+        ),
         bufferStrategy: bufferStrategy,
       ),
     );
   }
 
   int attachVideo({required int streamId}) {
-    final TiRtcConn? connection = _connection;
-    if (connection == null) {
-      return _tiRtcErrorInvalidArgument;
+    return _videoOutput.attach(connection: _connection, streamId: streamId);
+  }
+
+  int subscribeAudio({required int streamId}) {
+    if (_subscribedAudioStreamId == streamId) {
+      return 0;
     }
-    final TiRtcVideoOutput? videoOutput = _videoOutput;
-    if (videoOutput == null) {
-      return _tiRtcErrorInvalidArgument;
+    final int code = _connection.subscribeAudio(streamId: streamId);
+    if (code == 0) {
+      _subscribedAudioStreamId = streamId;
     }
-    return videoOutput.attach(connection: connection, streamId: streamId);
+    return code;
+  }
+
+  int subscribeVideo({required int streamId}) {
+    if (_subscribedVideoStreamId == streamId) {
+      return 0;
+    }
+    final int code = _connection.subscribeVideo(streamId: streamId);
+    if (code == 0) {
+      _subscribedVideoStreamId = streamId;
+    }
+    return code;
   }
 
   int sendCallCommand(DemoCallCommand command) {
     if (!command.valid) {
       return _tiRtcErrorInvalidArgument;
     }
-    final TiRtcConn? connection = _connection;
-    if (connection == null) {
-      return _tiRtcErrorInvalidArgument;
-    }
-    return connection.sendCommand(
+    return _connection.sendCommand(
       commandId: demoCallCommandId,
       data: command.encode(),
     );
   }
 
-  int sendCommand({
-    required int commandId,
-    required Uint8List payload,
-  }) {
-    final TiRtcConn? connection = _connection;
-    if (connection == null) {
-      return _tiRtcErrorInvalidArgument;
-    }
-    return connection.sendCommand(commandId: commandId, data: payload);
+  int sendCommand({required int commandId, required Uint8List payload}) {
+    return _connection.sendCommand(commandId: commandId, data: payload);
   }
 
   int sendStreamMessage({
@@ -202,26 +151,11 @@ final class DemoDownlinkSession {
     required Uint8List payload,
     int timestampMs = 0,
   }) {
-    final TiRtcConn? connection = _connection;
-    if (connection == null) {
-      return _tiRtcErrorInvalidArgument;
-    }
-    return connection.sendStreamMessage(streamId: streamId, timestampMs: timestampMs, data: payload);
-  }
-
-  Future<int> prepareLocalInputs({
-    TiRtcAudioInputOptions audioOptions = const TiRtcAudioInputOptions(),
-    TiRtcVideoInputOptions videoOptions = const TiRtcVideoInputOptions(),
-  }) async {
-    int code = await _audioInput.setOptions(audioOptions);
-    if (code != 0) {
-      return code;
-    }
-    code = await _videoInput.setOptions(videoOptions);
-    if (code != 0) {
-      return code;
-    }
-    return 0;
+    return _connection.sendStreamMessage(
+      streamId: streamId,
+      timestampMs: timestampMs,
+      data: payload,
+    );
   }
 
   Future<int> prepareLocalAudio({
@@ -231,191 +165,49 @@ final class DemoDownlinkSession {
   }
 
   Future<int> attachLocalAudio({required int streamId}) async {
-    final TiRtcConn? connection = _connection;
-    if (connection == null) {
-      return _tiRtcErrorInvalidArgument;
-    }
-    final int code = await _audioInput.attach(connection: connection, streamId: streamId);
+    final int code = await _audioInput.attach(
+      connection: _connection,
+      streamId: streamId,
+    );
     if (code == 0) {
-      _localAudioConnections.add(connection);
+      _localAudioAttached = true;
     }
     return code;
   }
 
-  Future<int> startLocalAudio() {
-    return _audioInput.start();
-  }
+  Future<int> startLocalAudio() => _audioInput.start();
 
-  Future<int> stopLocalAudio() {
-    return _audioInput.stop();
-  }
+  Future<int> stopLocalAudio() => _audioInput.stop();
 
-  Future<int> startLocalVideo() {
-    return _videoInput.start();
-  }
-
-  Future<int> startLocalInputs({
-    TiRtcAudioInputOptions audioOptions = const TiRtcAudioInputOptions(),
-    TiRtcVideoInputOptions videoOptions = const TiRtcVideoInputOptions(),
-  }) async {
-    final int prepareCode = await prepareLocalInputs(
-      audioOptions: audioOptions,
-      videoOptions: videoOptions,
-    );
-    if (prepareCode != 0) {
-      return prepareCode;
+  Future<void> detachLocalAudioFromBoundConnection() async {
+    if (!_localAudioAttached) {
+      return;
     }
-    int code = await _audioInput.start();
-    if (code != 0) {
-      return code;
-    }
-    code = await _videoInput.start();
-    if (code != 0) {
-      await _audioInput.stop();
-      return code;
-    }
-    return 0;
+    _localAudioAttached = false;
+    await _audioInput.detach(connection: _connection);
   }
 
-  Future<int> attachLocalInputs({
-    required int audioStreamId,
-    required int videoStreamId,
-  }) async {
-    final TiRtcConn? connection = _connection;
-    if (connection == null) {
-      return _tiRtcErrorInvalidArgument;
-    }
-    return attachLocalInputsToConnection(
-      connection,
-      audioStreamId: audioStreamId,
-      videoStreamId: videoStreamId,
-    );
-  }
+  TiRtcAudioOutputState get audioState => _audioOutput.state;
 
-  Future<int> attachLocalInputsToConnection(
-    TiRtcConn connection, {
-    required int audioStreamId,
-    required int videoStreamId,
-  }) async {
-    int code = await _audioInput.attach(connection: connection, streamId: audioStreamId);
-    if (code != 0) {
-      return code;
-    }
-    _localAudioConnections.add(connection);
-    code = await _videoInput.attach(connection: connection, streamId: videoStreamId);
-    if (code != 0) {
-      await _audioInput.detach(connection: connection);
-      _localAudioConnections.remove(connection);
-      return code;
-    }
-    _localVideoConnections.add(connection);
-    return 0;
-  }
+  TiRtcVideoOutputState get videoState => _videoOutput.state;
 
-  Future<void> detachAndStopLocalInputs() async {
-    await stopAndDetachLocalInputs();
-  }
-
-  Future<void> stopAndDetachLocalInputs() async {
-    TiRtcLogging.i('flutter_example', 'local_video_input_stop_start');
-    final int videoStopCode = await _videoInput.stop();
-    TiRtcLogging.i('flutter_example', 'local_video_input_stop_done code=$videoStopCode');
-    TiRtcLogging.i('flutter_example', 'local_audio_input_stop_start');
-    final int audioStopCode = await _audioInput.stop();
-    TiRtcLogging.i('flutter_example', 'local_audio_input_stop_done code=$audioStopCode');
-    TiRtcLogging.i('flutter_example', 'local_inputs_detach_all_start');
-    await detachLocalInputsFromAllConnections();
-    TiRtcLogging.i('flutter_example', 'local_inputs_detach_all_done');
-  }
-
-  TiRtcAudioOutputState get audioState => _audioOutput?.state ?? TiRtcAudioOutputState.idle;
-
-  TiRtcVideoOutputState get videoState => _videoOutput?.state ?? TiRtcVideoOutputState.idle;
-
-  TiRtcInputState get audioInputState => _audioInput.state;
-
-  TiRtcInputState get videoInputState => _videoInput.state;
-
-  Size? get localVideoSize => _videoInput.outputSize;
-
-  int? get localVideoFps => _videoInput.outputFps;
-
-  Size? get renderSize => _videoOutput?.renderSize;
-
-  bool get hasBoundConnection => _connection != null;
+  Size? get renderSize => _videoOutput.renderSize;
 
   void detachAudio() {
-    _audioOutput?.detach();
+    _audioOutput.detach();
   }
 
   int resetOutputMetricsSession() {
-    final TiRtcAudioOutput? audioOutput = _audioOutput;
-    final TiRtcVideoOutput? videoOutput = _videoOutput;
-    if (audioOutput == null || videoOutput == null) {
-      return _tiRtcErrorInvalidArgument;
-    }
-    int code = audioOutput.resetMetricsSession();
+    int code = _audioOutput.resetMetricsSession();
     if (code != 0) {
       return code;
     }
-    code = videoOutput.resetMetricsSession();
-    if (code != 0) {
-      return code;
-    }
-    return 0;
+    code = _videoOutput.resetMetricsSession();
+    return code;
   }
 
   void disconnectConnection() {
-    _connection?.disconnect();
-  }
-
-  Future<void> detachLocalInputsFromBoundConnection() async {
-    final TiRtcConn? connection = _connection;
-    if (connection != null) {
-      await detachLocalInputsFromConnection(connection);
-    }
-  }
-
-  Future<void> detachLocalAudioFromBoundConnection() async {
-    final TiRtcConn? connection = _connection;
-    if (connection != null && _localAudioConnections.remove(connection)) {
-      await _audioInput.detach(connection: connection);
-    }
-  }
-
-  Future<void> detachLocalInputsFromConnection(TiRtcConn connection) async {
-    if (_localVideoConnections.remove(connection)) {
-      await _videoInput.detach(connection: connection);
-    }
-    if (_localAudioConnections.remove(connection)) {
-      await _audioInput.detach(connection: connection);
-    }
-  }
-
-  Future<void> detachLocalInputsFromAllConnections() async {
-    final List<TiRtcConn> videoConnections = List<TiRtcConn>.of(_localVideoConnections);
-    _localVideoConnections.clear();
-    for (final TiRtcConn connection in videoConnections) {
-      await _videoInput.detach(connection: connection);
-    }
-
-    final List<TiRtcConn> audioConnections = List<TiRtcConn>.of(_localAudioConnections);
-    _localAudioConnections.clear();
-    for (final TiRtcConn connection in audioConnections) {
-      await _audioInput.detach(connection: connection);
-    }
-  }
-
-  void releaseBoundConnectionIfSame(TiRtcConn connection) {
-    if (!identical(_connection, connection)) {
-      return;
-    }
-    releaseBoundConnection();
-  }
-
-  void releaseBoundConnection() {
-    _connection?.dispose();
-    _connection = null;
+    _connection.disconnect();
   }
 
   Future<void> release({required String reason}) async {
@@ -443,27 +235,43 @@ final class DemoDownlinkSession {
   }
 
   Future<void> _performRelease() async {
-    _videoOutput?.detach();
-    _audioOutput?.detach();
-    await detachAndStopLocalInputs();
-    _connection?.disconnect();
+    final int? subscribedVideoStreamId = _subscribedVideoStreamId;
+    _subscribedVideoStreamId = null;
+    if (subscribedVideoStreamId != null) {
+      final int code = _connection.unsubscribeVideo(streamId: subscribedVideoStreamId);
+      if (code != 0) {
+        TiRtcLogging.w(
+          'flutter_example',
+          'video_unsubscribe_cleanup_failed stream_id=$subscribedVideoStreamId code=$code',
+        );
+      }
+    }
+
+    final int? subscribedAudioStreamId = _subscribedAudioStreamId;
+    _subscribedAudioStreamId = null;
+    if (subscribedAudioStreamId != null) {
+      final int code = _connection.unsubscribeAudio(streamId: subscribedAudioStreamId);
+      if (code != 0) {
+        TiRtcLogging.w(
+          'flutter_example',
+          'audio_unsubscribe_cleanup_failed stream_id=$subscribedAudioStreamId code=$code',
+        );
+      }
+    }
+
+    _videoOutput.detach();
+    _audioOutput.detach();
+    await _audioInput.stop();
+    await detachLocalAudioFromBoundConnection();
+    _connection.disconnect();
   }
 
   DownlinkMetricsOverlayModel? readMetricsOverlay({
     required int requestedDecoderPreference,
   }) {
-    final TiRtcConn? connection = _connection;
-    if (connection == null) {
-      return null;
-    }
-    final TiRtcConnMetricsResult connResult = connection.getMetricsSnapshot();
-    final TiRtcVideoOutput? videoOutput = _videoOutput;
-    final TiRtcAudioOutput? audioOutput = _audioOutput;
-    if (videoOutput == null || audioOutput == null) {
-      return null;
-    }
-    final TiRtcVideoOutputMetricsResult videoResult = videoOutput.getMetricsSnapshot();
-    final TiRtcAudioOutputMetricsResult audioResult = audioOutput.getMetricsSnapshot();
+    final TiRtcConnMetricsResult connResult = _connection.getMetricsSnapshot();
+    final TiRtcVideoOutputMetricsResult videoResult = _videoOutput.getMetricsSnapshot();
+    final TiRtcAudioOutputMetricsResult audioResult = _audioOutput.getMetricsSnapshot();
     if (connResult.code != 0 || videoResult.code != 0 || audioResult.code != 0) {
       return null;
     }
@@ -475,82 +283,68 @@ final class DemoDownlinkSession {
       return null;
     }
 
-    final TiRtcAudioOutputDebugSnapshotResult audioDebugResult = audioOutput.getDebugSnapshot();
-    final TiRtcVideoOutputDebugSnapshotResult videoDebugResult = videoOutput.getDebugSnapshot();
+    final TiRtcAudioOutputDebugSnapshotResult audioDebugResult = _audioOutput.getDebugSnapshot();
+    final TiRtcVideoOutputDebugSnapshotResult videoDebugResult = _videoOutput.getDebugSnapshot();
     final TiRtcAudioOutputDebugSnapshot? audioDebugSnapshot =
         audioDebugResult.code == 0 ? audioDebugResult.snapshot : null;
     final TiRtcVideoOutputDebugSnapshot? videoDebugSnapshot =
         videoDebugResult.code == 0 ? videoDebugResult.snapshot : null;
+    final int videoWidth = videoSnapshot.videoWidth;
+    final int videoHeight = videoSnapshot.videoHeight;
+    final int videoCodec = videoSnapshot.videoCodec;
+    final int audioCodec = audioSnapshot.audioCodec;
+    final int audioSampleRate = audioSnapshot.audioSampleRateHz;
+    final int audioChannels = audioSnapshot.audioChannels;
+    final int decoderBackend = videoSnapshot.decoderBackend;
 
     return DownlinkMetricsOverlayModel(
       connectDurationMs: connSnapshot.connectDurationMs,
-      firstFrameDurationMs: videoSnapshot.startup.firstFrameDurationMs,
-      sessionStutterRatio: videoSnapshot.stutter.sessionStutterRatio,
-      sessionStutterTotalMs: videoSnapshot.stutter.sessionStutterTotalMs,
-      sessionStutterCount: videoSnapshot.stutter.sessionStutterCount,
-      sessionStutterPeakMs: videoSnapshot.stutter.sessionStutterPeakMs,
-      videoWidth: videoDebugSnapshot?.width,
-      videoHeight: videoDebugSnapshot?.height,
-      videoCodec: videoDebugSnapshot?.codec,
-      audioCodec: audioDebugSnapshot?.codec,
-      audioSampleRate: audioDebugSnapshot?.sampleRate,
-      audioChannels: audioDebugSnapshot?.channels,
+      firstVideoOutputMs: videoSnapshot.startup.timeToFirstOutputMs,
+      firstAudioOutputMs: audioSnapshot.startup.timeToFirstOutputMs,
+      videoWidth: videoWidth > 0 ? videoWidth : videoDebugSnapshot?.width,
+      videoHeight: videoHeight > 0 ? videoHeight : videoDebugSnapshot?.height,
+      videoCodec: videoCodec != 0 ? videoCodec : videoDebugSnapshot?.codec,
+      audioCodec: audioCodec != 0 ? audioCodec : audioDebugSnapshot?.codec,
+      audioSampleRate: audioSampleRate > 0 ? audioSampleRate : audioDebugSnapshot?.sampleRate,
+      audioChannels: audioChannels > 0 ? audioChannels : audioDebugSnapshot?.channels,
       requestedDecoderPreference: requestedDecoderPreference,
-      resolvedDecoderBackend: videoDebugSnapshot?.resolvedDecoderBackend,
-      audioInputBitrateKbps: audioSnapshot.inputBitrateKbps,
-      audioInputPacketRate: audioSnapshot.inputPacketRate,
-      audioRenderCallbackRate: audioSnapshot.renderCallbackRate,
-      audioRecentStutterRatio: audioSnapshot.stutter.recentWindowStutterRatio,
-      audioRecentStutterCount: audioSnapshot.stutter.recentWindowStutterCount,
-      audioRecentStutterTotalMs: audioSnapshot.stutter.recentWindowStutterTotalMs,
-      audioRecentStutterPeakMs: audioSnapshot.stutter.recentWindowStutterPeakMs,
-      audioRateWindowDurationMs: audioSnapshot.rateWindowDurationMs,
-      audioLatencyWindowDurationMs: audioSnapshot.localLatency.windowDurationMs,
-      audioLatencyTotalAverageMs: audioSnapshot.localLatency.total.averageMs,
-      audioLatencyBufferAverageMs: audioSnapshot.localLatency.buffer.averageMs,
-      audioLatencyDecodeReadyAverageMs: audioSnapshot.localLatency.decodeOrReady.averageMs,
-      audioLatencyOutputAverageMs: audioSnapshot.localLatency.output.averageMs,
-      audioLatencyTotalSampleCount: audioSnapshot.localLatency.total.sampleCount,
-      audioLatencyBufferSampleCount: audioSnapshot.localLatency.buffer.sampleCount,
-      audioLatencyDecodeReadySampleCount: audioSnapshot.localLatency.decodeOrReady.sampleCount,
-      audioLatencyOutputSampleCount: audioSnapshot.localLatency.output.sampleCount,
-      audioLatencyTotalUnavailableCount: audioSnapshot.localLatency.total.unavailableCount,
-      audioLatencySessionDurationMs: audioSnapshot.localLatency.sessionDurationMs,
-      audioLatencySessionTotalAverageMs: audioSnapshot.localLatency.sessionTotal.averageMs,
-      audioLatencySessionTotalMinMs: audioSnapshot.localLatency.sessionTotal.minMs,
-      audioLatencySessionTotalPeakMs: audioSnapshot.localLatency.sessionTotal.peakMs,
-      audioLatencySessionTotalSampleCount: audioSnapshot.localLatency.sessionTotal.sampleCount,
-      audioLatencySessionTotalUnavailableCount: audioSnapshot.localLatency.sessionTotal.unavailableCount,
-      videoInputBitrateKbps: videoSnapshot.inputBitrateKbps,
-      videoInputFps: videoSnapshot.inputFps,
-      videoDecodedFps: videoSnapshot.decodedFps,
-      videoRenderFps: videoSnapshot.renderFps,
-      videoRateWindowDurationMs: videoSnapshot.rateWindowDurationMs,
-      videoLatencyWindowDurationMs: videoSnapshot.localLatency.windowDurationMs,
-      videoLatencyTotalAverageMs: videoSnapshot.localLatency.total.averageMs,
-      videoLatencyBufferAverageMs: videoSnapshot.localLatency.buffer.averageMs,
-      videoLatencyDecodeReadyAverageMs: videoSnapshot.localLatency.decodeOrReady.averageMs,
-      videoLatencyOutputAverageMs: videoSnapshot.localLatency.output.averageMs,
-      videoLatencyTotalSampleCount: videoSnapshot.localLatency.total.sampleCount,
-      videoLatencyBufferSampleCount: videoSnapshot.localLatency.buffer.sampleCount,
-      videoLatencyDecodeReadySampleCount: videoSnapshot.localLatency.decodeOrReady.sampleCount,
-      videoLatencyOutputSampleCount: videoSnapshot.localLatency.output.sampleCount,
-      videoLatencyTotalUnavailableCount: videoSnapshot.localLatency.total.unavailableCount,
-      videoLatencySessionDurationMs: videoSnapshot.localLatency.sessionDurationMs,
-      videoLatencySessionTotalAverageMs: videoSnapshot.localLatency.sessionTotal.averageMs,
-      videoLatencySessionTotalMinMs: videoSnapshot.localLatency.sessionTotal.minMs,
-      videoLatencySessionTotalPeakMs: videoSnapshot.localLatency.sessionTotal.peakMs,
-      videoLatencySessionTotalSampleCount: videoSnapshot.localLatency.sessionTotal.sampleCount,
-      videoLatencySessionTotalUnavailableCount: videoSnapshot.localLatency.sessionTotal.unavailableCount,
+      resolvedDecoderBackend: decoderBackend != 0 ? decoderBackend : videoDebugSnapshot?.resolvedDecoderBackend,
+      audioInputBitrateKbps: audioSnapshot.audioInputBitrateKbps,
+      audioInputPacketRate: audioSnapshot.audioInputPacketRate,
+      audioRenderCallbackRate: audioSnapshot.audioRenderCallbackRate,
+      audioStatsRefreshIntervalMs: audioSnapshot.statsRefreshIntervalMs,
+      audioStatsUpdatedAtMs: audioSnapshot.statsUpdatedAtMs,
+      audioStutterThresholdMs: audioSnapshot.stutter.stutterThresholdMs,
+      audioOutputDurationMs: audioSnapshot.stutter.outputDurationMs,
+      audioStutterTotalMs: audioSnapshot.stutter.stutterTotalMs,
+      audioStutterCount: audioSnapshot.stutter.stutterCount,
+      audioStutterPeakMs: audioSnapshot.stutter.stutterPeakMs,
+      audioStutterAverageMs: audioSnapshot.stutter.stutterAverageMs,
+      audioStutterRate: audioSnapshot.stutter.stutterRate,
+      audioEstimatedOutputLatencyMs: audioSnapshot.estimatedOutputLatencyMs,
+      videoInputBitrateKbps: videoSnapshot.videoInputBitrateKbps,
+      videoInputFps: videoSnapshot.videoInputFps,
+      videoDecodedFps: videoSnapshot.videoDecodedFps,
+      videoRenderFps: videoSnapshot.videoRenderFps,
+      videoStatsRefreshIntervalMs: videoSnapshot.statsRefreshIntervalMs,
+      videoStatsUpdatedAtMs: videoSnapshot.statsUpdatedAtMs,
+      videoStutterThresholdMs: videoSnapshot.stutter.stutterThresholdMs,
+      videoOutputDurationMs: videoSnapshot.stutter.outputDurationMs,
+      videoStutterTotalMs: videoSnapshot.stutter.stutterTotalMs,
+      videoStutterCount: videoSnapshot.stutter.stutterCount,
+      videoStutterPeakMs: videoSnapshot.stutter.stutterPeakMs,
+      videoStutterAverageMs: videoSnapshot.stutter.stutterAverageMs,
+      videoStutterRate: videoSnapshot.stutter.stutterRate,
+      videoEstimatedOutputLatencyMs: videoSnapshot.estimatedOutputLatencyMs,
     );
   }
 
   TiRtcVideoOutputMetricsResult videoMetrics() {
-    final TiRtcVideoOutput? videoOutput = _videoOutput;
-    if (videoOutput == null) {
-      return (code: _tiRtcErrorInvalidArgument, snapshot: null);
-    }
-    return videoOutput.getMetricsSnapshot();
+    return _videoOutput.getMetricsSnapshot();
+  }
+
+  TiRtcAudioOutputMetricsResult audioMetrics() {
+    return _audioOutput.getMetricsSnapshot();
   }
 
   void dispose() {
@@ -563,11 +357,17 @@ final class DemoDownlinkSession {
     }
     _disposed = true;
     await release(reason: 'session_dispose');
-    await _videoInput.dispose();
     await _audioInput.dispose();
-    _videoOutput?.dispose();
-    _audioOutput?.dispose();
-    _connection?.dispose();
-    _connection = null;
+    _videoOutput.dispose();
+    _audioOutput.dispose();
+    _connection.dispose();
   }
+}
+
+TiRtcVideoDecoderPreference _videoDecoderPreferenceFromNativeValue(int value) {
+  return switch (value) {
+    1 => TiRtcVideoDecoderPreference.software,
+    2 => TiRtcVideoDecoderPreference.hardware,
+    _ => TiRtcVideoDecoderPreference.auto,
+  };
 }

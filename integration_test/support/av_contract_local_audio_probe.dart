@@ -1,9 +1,9 @@
 import 'dart:io';
 
-import 'package:tirtc_av_kit/tirtc_av_kit.dart';
+import 'package:tirtc_flutter/tirtc_flutter.dart';
 
-import 'package:tirtc_av_kit_example/src/demo_configuration.dart';
-import 'package:tirtc_av_kit_example/src/demo_downlink_session.dart';
+import 'package:tirtc_example/src/demo_configuration.dart';
+import 'package:tirtc_example/src/demo_downlink_session.dart';
 
 final class AvContractLocalAudioProbeMarker {
   const AvContractLocalAudioProbeMarker({
@@ -120,6 +120,8 @@ TiRtcAudioInputOptions _localAudioOptions(DemoExampleSettings settings) {
     codec: switch (settings.localAudioCodec) {
       DemoExampleSettings.localAudioCodecAac => TiRtcAudioCodec.aac,
       DemoExampleSettings.localAudioCodecPcm => TiRtcAudioCodec.pcm,
+      DemoExampleSettings.localAudioCodecOpus => TiRtcAudioCodec.opus,
+      DemoExampleSettings.localAudioCodecAmr => TiRtcAudioCodec.amr,
       _ => TiRtcAudioCodec.g711a,
     },
     sampleRate: settings.localAudioSampleRateHz == DemoExampleSettings.localAudioSampleRate8k

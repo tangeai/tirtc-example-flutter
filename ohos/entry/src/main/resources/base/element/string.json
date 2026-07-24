@@ -13,10 +13,6 @@
       "value": "TiRTC Flutter Example"
     },
     {
-      "name": "Camera_permission_reason",
-      "value": "Used to capture local video and show local preview."
-    },
-    {
       "name": "Microphone_permission_reason",
       "value": "Used to capture local audio."
     }

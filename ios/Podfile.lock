@@ -51,16 +51,16 @@ PODS:
   - nanopb/decode (3.30910.0)
   - nanopb/encode (3.30910.0)
   - PromisesObjC (2.4.1)
-  - TiRTC_AV (2.2.0)
-  - tirtc_av_kit (1.0.0):
+  - TiRTC (2.2.9)
+  - tirtc_flutter (1.0.0):
     - Flutter
-    - TiRTC_AV (= 2.2.0)
+    - TiRTC (= 2.2.9)
 
 DEPENDENCIES:
   - Flutter (from `Flutter`)
   - integration_test (from `.symlinks/plugins/integration_test/ios`)
   - mobile_scanner (from `.symlinks/plugins/mobile_scanner/ios`)
-  - tirtc_av_kit (from `.symlinks/plugins/tirtc_av_kit/ios`)
+  - tirtc_flutter (from `.symlinks/plugins/tirtc_flutter/ios`)
 
 SPEC REPOS:
   https://github.com/CocoaPods/Specs.git:
@@ -75,7 +75,7 @@ SPEC REPOS:
     - MLKitVision
     - nanopb
     - PromisesObjC
-    - TiRTC_AV
+    - TiRTC
 
 EXTERNAL SOURCES:
   Flutter:
@@ -84,8 +84,8 @@ EXTERNAL SOURCES:
     :path: ".symlinks/plugins/integration_test/ios"
   mobile_scanner:
     :path: ".symlinks/plugins/mobile_scanner/ios"
-  tirtc_av_kit:
-    :path: ".symlinks/plugins/tirtc_av_kit/ios"
+  tirtc_flutter:
+    :path: ".symlinks/plugins/tirtc_flutter/ios"
 
 SPEC CHECKSUMS:
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
@@ -102,9 +102,9 @@ SPEC CHECKSUMS:
   mobile_scanner: fd0054c52ede661e80bf5a4dea477a2467356bee
   nanopb: fad817b59e0457d11a5dfbde799381cd727c1275
   PromisesObjC: 752c3227f599e3467650e47ea36f433eeb10c273
-  TiRTC_AV: 84bd0b565b1454b5cf89dc509a60dfee334ff2eb
-  tirtc_av_kit: 6826c1d802499915475cdc8cae683da452605941
+  TiRTC: ea9c75c9e92e077b244bd8f4a91301c7d74f4d45
+  tirtc_flutter: f498a9dbd5abe0f97bd039f61cad6b57d9df0eaa
 
-PODFILE CHECKSUM: c2a8c235a0b61751144969513d50229b810fb19f
+PODFILE CHECKSUM: c3ff4f1900999179a309d30af0bc317eb1800f66
 
 COCOAPODS: 1.16.2

@@ -38,24 +38,6 @@ void main() {
     expect(amr.payload!.audioSampleRateHz, 8000);
   });
 
-  test('automation payload keeps device server local audio input constrained', () {
-    final AutomationPayloadParseResult result = AutomationPayload.tryParse(
-      runIdAuthority: 'device-opus',
-      payloadBase64Url: _payloadDefine(
-        _deviceServerPayload(
-          runId: 'device-opus',
-          audioCodec: 'opus',
-        ),
-      ),
-    );
-
-    expect(result.valid, isFalse);
-    expect(
-      result.failureMessage,
-      'audio_codec must be g711a, aac, or pcm for device server audio input',
-    );
-  });
-
   test('downlink automation payload rejects unsupported AMR variants', () {
     final AutomationPayloadParseResult result = AutomationPayload.tryParse(
       runIdAuthority: 'downlink-amr-stereo',
@@ -98,35 +80,6 @@ Map<String, Object?> _downlinkPayload({
     'audio_codec': audioCodec,
     'audio_sample_rate_hz': audioSampleRateHz,
     'audio_channels': audioChannels,
-    'video_decoder_preference': 0,
-    'buffer_policy': 'automatic',
-    'render_window_seconds': AutomationPayload.expectedRenderWindowSeconds,
-    'auto_upload_logs': true,
-    'console_log_enabled': true,
-  };
-}
-
-Map<String, Object?> _deviceServerPayload({
-  required String runId,
-  required String audioCodec,
-}) {
-  return <String, Object?>{
-    'schema_version': AutomationPayload.schemaVersion,
-    'scenario': AutomationPayload.scenarioFlutterDeviceServerToCliClient,
-    'run_id': runId,
-    'pairing_id': '$runId-pairing',
-    'bootstrap_id': '$runId-bootstrap',
-    'app_id': 'AD_testapp',
-    'endpoint': 'https://example.invalid',
-    'device_id': 'PRODTEST',
-    'device_secret_key': 'secret',
-    'audio_stream_id': AutomationPayload.expectedAudioStreamId,
-    'video_stream_id': AutomationPayload.expectedVideoStreamId,
-    'codec': 'h264',
-    'audio_codec': audioCodec,
-    'audio_sample_rate_hz': 16000,
-    'audio_channels': 1,
-    'encoder_preference': 'hardware',
     'video_decoder_preference': 0,
     'buffer_policy': 'automatic',
     'render_window_seconds': AutomationPayload.expectedRenderWindowSeconds,

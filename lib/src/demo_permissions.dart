@@ -1,23 +1,19 @@
 import 'dart:io';
 
 import 'package:flutter/services.dart';
-import 'package:tirtc_av_kit/tirtc_av_kit.dart';
+import 'package:tirtc_flutter/tirtc_flutter.dart';
 
 final class DemoExamplePermissions {
   const DemoExamplePermissions();
 
-  static const MethodChannel _channel = MethodChannel('tirtc_av_kit_example/permissions');
-
-  Future<bool> checkCameraPermission() => _checkPermission('checkCameraPermission', 'camera');
-
-  Future<bool> requestCameraPermission() => _requestPermission('requestCameraPermission', 'camera');
+  static const MethodChannel _channel = MethodChannel('tirtc_example/permissions');
 
   Future<bool> checkMicrophonePermission() => _checkPermission('checkMicrophonePermission', 'microphone');
 
   Future<bool> requestMicrophonePermission() => _requestPermission('requestMicrophonePermission', 'microphone');
 
   Future<bool> _checkPermission(String method, String name) async {
-    if (!_capturePermissionsSupported) {
+    if (!_microphonePermissionSupported) {
       return true;
     }
     try {
@@ -32,7 +28,7 @@ final class DemoExamplePermissions {
   }
 
   Future<bool> _requestPermission(String method, String name) async {
-    if (!_capturePermissionsSupported) {
+    if (!_microphonePermissionSupported) {
       return true;
     }
     try {
@@ -61,6 +57,6 @@ final class DemoExamplePermissions {
     }
   }
 
-  bool get _capturePermissionsSupported =>
+  bool get _microphonePermissionSupported =>
       Platform.isAndroid || Platform.isIOS || Platform.isMacOS || Platform.operatingSystem == 'ohos';
 }

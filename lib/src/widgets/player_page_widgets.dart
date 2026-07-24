@@ -245,3 +245,30 @@ class LocalAudioControlButton extends StatelessWidget {
     );
   }
 }
+
+class AudioOutputVolumeButton extends StatelessWidget {
+  const AudioOutputVolumeButton({
+    super.key,
+    required this.enabled,
+    required this.muted,
+    required this.onPressed,
+  });
+
+  final bool enabled;
+  final bool muted;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return FilledButton.icon(
+      onPressed: enabled ? onPressed : null,
+      style: FilledButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+        backgroundColor: muted ? Colors.orangeAccent.shade700 : ExampleTheme.surface,
+        foregroundColor: muted ? Colors.white : ExampleTheme.primary,
+      ),
+      icon: Icon(muted ? Icons.volume_up_rounded : Icons.volume_off_rounded),
+      label: Text(muted ? '恢复声音' : '静音'),
+    );
+  }
+}

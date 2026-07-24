@@ -3,16 +3,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
-import 'package:tirtc_av_kit_example/src/app_theme.dart';
-import 'package:tirtc_av_kit_example/src/device/device_configure_page.dart';
-import 'package:tirtc_av_kit_example/src/device/device_page.dart';
-import 'package:tirtc_av_kit_example/src/demo_route_lifecycle.dart';
-import 'package:tirtc_av_kit_example/src/demo_test_hooks.dart';
-import 'package:tirtc_av_kit_example/src/demo_widget_keys.dart';
-import 'package:tirtc_av_kit_example/src/pages/configure_page.dart';
-import 'package:tirtc_av_kit_example/src/pages/player_page.dart';
-import 'package:tirtc_av_kit_example/src/widgets/command_panel_model.dart';
-import 'package:tirtc_av_kit_example/src/widgets/downlink_metrics_overlay.dart';
+import 'package:tirtc_example/src/app_theme.dart';
+import 'package:tirtc_example/src/demo_route_lifecycle.dart';
+import 'package:tirtc_example/src/demo_test_hooks.dart';
+import 'package:tirtc_example/src/demo_widget_keys.dart';
+import 'package:tirtc_example/src/pages/configure_page.dart';
+import 'package:tirtc_example/src/pages/player_page.dart';
+import 'package:tirtc_example/src/widgets/command_panel_model.dart';
+import 'package:tirtc_example/src/widgets/downlink_metrics_overlay.dart';
 
 import '../support/example_smoke_marker_sink.dart';
 import '../support/example_smoke_payload.dart';
@@ -57,20 +55,12 @@ void main() {
         'flow': payload.flow,
         'app_id_present': payload.appId.isNotEmpty,
         'remote_id': payload.remoteId,
-        'token_source': payload.tokenSource,
         'one_time_token_present': payload.token.isNotEmpty,
-        'token_issuer_base_url_present': payload.tokenIssuerBaseUrl.isNotEmpty,
         'audio_stream_id': payload.audioStreamId,
         'local_audio_stream_id': payload.localAudioStreamId,
         'video_stream_id': payload.videoStreamId,
         'render_window_seconds': payload.renderWindowSeconds,
       });
-
-      if (payload.flow == 'device_server_ui') {
-        await _observeInitialConfigurePage(tester, markers, payload);
-        await _runDeviceServerFlow(tester, markers, payload);
-        return;
-      }
 
       await _observeInitialConfigurePage(tester, markers, payload);
       await _runDownlinkFlow(tester, markers, markerSink, payload);
@@ -91,16 +81,14 @@ Future<void> _runDownlinkFlow(
   await _enterSmokeText(tester, find.byKey(DemoWidgetKeys.remoteIdField), payload.remoteId);
   await _enterSmokeText(tester, find.byKey(DemoWidgetKeys.audioStreamIdField), payload.audioStreamId.toString());
   await _enterSmokeText(tester, find.byKey(DemoWidgetKeys.videoStreamIdField), payload.videoStreamId.toString());
-  await _applyDownlinkTokenSource(tester, payload);
+  await _enterSmokeText(tester, find.byKey(DemoWidgetKeys.tokenField), payload.token);
   await _observe(
     tester,
     markers,
     'smoke_public_form_populated',
     payload: <String, Object?>{
       'flow': payload.flow,
-      'token_source': payload.tokenSource,
       'one_time_token_present': payload.token.isNotEmpty,
-      'token_issuer_base_url_present': payload.tokenIssuerBaseUrl.isNotEmpty,
     },
   );
 
@@ -129,6 +117,7 @@ Future<void> _runDownlinkFlow(
     openButton: find.byKey(DemoWidgetKeys.playerCommandButton),
   );
   await _runLocalAudioSmokeFlow(tester, markers, markerSink, payload);
+  await _runAudioOutputVolumeSmokeFlow(tester, markers, markerSink, payload);
   await Future<void>.delayed(Duration(seconds: payload.renderWindowSeconds + 3));
   await tester.pump();
   await _tapAndObserve(
@@ -161,7 +150,6 @@ final class _SmokeFlowMarkerSink implements DemoAutomationMarkerSink {
   final ExampleSmokePayload payload;
   final ExampleSmokeMarkerSink delegate;
   bool _bubbleVisibleMarked = false;
-  bool _streamMessageSentMarked = false;
   final Set<String> _seenMarkers = <String>{};
   final Map<String, int> _markerCounts = <String, int>{};
   final Map<String, Map<String, Object?>> _latestPayloads = <String, Map<String, Object?>>{};
@@ -189,8 +177,6 @@ final class _SmokeFlowMarkerSink implements DemoAutomationMarkerSink {
     }
     if (marker == 'stream_message_received') {
       _markBubbleVisible(payload);
-    } else if (marker == 'stream_message_sent') {
-      _markStreamMessageSent(payload);
     }
   }
 
@@ -221,24 +207,6 @@ final class _SmokeFlowMarkerSink implements DemoAutomationMarkerSink {
       'alignment': 'bottom_right',
       'animation_direction': 'right_to_left',
       'visible': true,
-    });
-  }
-
-  void _markStreamMessageSent(Map<String, Object?> eventPayload) {
-    if (_streamMessageSentMarked || payload.flow != 'device_server_ui') {
-      return;
-    }
-    _streamMessageSentMarked = true;
-    delegate.passed('smoke_stream_message_sent', payload: <String, Object?>{
-      'flow': payload.flow,
-      'pairing_id': payload.pairingId,
-      'session_index': eventPayload['session_index'],
-      'stream_id': eventPayload['stream_id'],
-      'payload_epoch_seconds': eventPayload['payload_epoch_seconds'],
-      'payload_bytes': eventPayload['payload_bytes'],
-      'payload_hash': eventPayload['payload_hash'],
-      'sent_count': eventPayload['sent_count'],
-      'periodic_send_ok': eventPayload['periodic_send_ok'],
     });
   }
 
@@ -328,6 +296,36 @@ Future<void> _runLocalAudioSmokeFlow(
   });
 }
 
+Future<void> _runAudioOutputVolumeSmokeFlow(
+  WidgetTester tester,
+  ExampleSmokeMarkerSink markers,
+  _SmokeFlowMarkerSink markerSink,
+  ExampleSmokePayload payload,
+) async {
+  final Finder button = find.byKey(DemoWidgetKeys.playerAudioVolumeButton);
+  await _pumpUntilEnabled(tester, button);
+  await tester.tap(button);
+  await tester.pump();
+  await markerSink.waitForMarker(
+    'smoke_audio_output_muted',
+    timeout: const Duration(seconds: 15),
+  );
+  await Future<void>.delayed(const Duration(seconds: 5));
+  await tester.pump();
+  await tester.tap(button);
+  await tester.pump();
+  await markerSink.waitForMarker(
+    'smoke_audio_output_restored',
+    timeout: const Duration(seconds: 15),
+  );
+  markers.passed('smoke_audio_output_volume_cycle_completed', payload: <String, Object?>{
+    'flow': payload.flow,
+    'mute_seconds': 5,
+    'muted_volume_percent': 0,
+    'restored_volume_percent': 100,
+  });
+}
+
 Future<void> _runCommandPanelEchoFlow(
   WidgetTester tester,
   ExampleSmokeMarkerSink markers,
@@ -376,63 +374,6 @@ Future<void> _runCommandPanelEchoFlow(
   await tester.pumpAndSettle();
 }
 
-Future<void> _runDeviceServerFlow(
-  WidgetTester tester,
-  ExampleSmokeMarkerSink markers,
-  ExampleSmokePayload payload,
-) async {
-  await _tapAndObserve(
-    tester,
-    markers,
-    find.byKey(DemoWidgetKeys.openDeviceServerButton),
-    marker: 'smoke_open_device_server_tapped',
-    flow: payload.flow,
-  );
-  await _pumpUntilVisible(tester, find.byType(DemoDeviceServerConfigurePage));
-  expect(find.byType(DemoDeviceServerConfigurePage), findsOneWidget);
-
-  await _enterSmokeText(tester, find.byKey(DemoWidgetKeys.deviceEndpointField), payload.endpoint);
-  await _enterSmokeText(tester, find.byKey(DemoWidgetKeys.deviceIdField), payload.deviceId);
-  await _enterSmokeText(tester, find.byKey(DemoWidgetKeys.deviceSecretKeyField), payload.deviceSecretKey);
-  await _observe(
-    tester,
-    markers,
-    'smoke_public_form_populated',
-    payload: <String, Object?>{'flow': payload.flow},
-  );
-
-  await _pumpUntilEnabled(tester, find.byKey(DemoWidgetKeys.startDeviceServerButton));
-  await _tapAndObserve(
-    tester,
-    markers,
-    find.byKey(DemoWidgetKeys.startDeviceServerButton),
-    marker: 'smoke_public_submit_tapped',
-    flow: payload.flow,
-  );
-  await _pumpUntilVisible(tester, find.byKey(DemoWidgetKeys.deviceServerPage));
-  expect(find.byType(DemoDeviceServerPage), findsOneWidget);
-  await _observe(
-    tester,
-    markers,
-    'smoke_page_visible',
-    payload: <String, Object?>{'flow': payload.flow, 'page': 'device_server'},
-  );
-  await _runCommandPanelEchoFlow(
-    tester,
-    markers,
-    payload.flow,
-    openButton: find.byKey(DemoWidgetKeys.deviceServerCommandButton),
-  );
-  await Future<void>.delayed(Duration(seconds: payload.renderWindowSeconds + 15));
-  await tester.pump();
-  await _observe(
-    tester,
-    markers,
-    'smoke_public_ui_submitted',
-    payload: <String, Object?>{'flow': payload.flow},
-  );
-}
-
 Future<void> _observeInitialConfigurePage(
   WidgetTester tester,
   ExampleSmokeMarkerSink markers,
@@ -445,8 +386,9 @@ Future<void> _observeInitialConfigurePage(
   }
   await tester.pump();
   expect(find.byType(DemoConfigurePage), findsOneWidget);
-  expect(find.text('连接 Token'), findsOneWidget);
-  expect(find.text('Token 签发服务地址'), findsWidgets);
+  expect(find.text('Based on Flutter'), findsOneWidget);
+  expect(find.text('连接 Token'), findsNothing);
+  expect(find.text('Token 签发服务地址'), findsNothing);
   expect(find.text('一次性连接 Token'), findsWidgets);
   expect(find.text('token_issuer_base_url'), findsNothing);
   markers.passed('smoke_configure_page_ready', payload: <String, Object?>{
@@ -454,29 +396,6 @@ Future<void> _observeInitialConfigurePage(
     'platform': payload.platform,
     'stable_duration_ms': observationDelay.inMilliseconds,
   });
-}
-
-Future<void> _applyDownlinkTokenSource(
-  WidgetTester tester,
-  ExampleSmokePayload payload,
-) async {
-  switch (payload.tokenSource) {
-    case exampleSmokeTokenSourceIssuer:
-      await _selectTokenSource(tester, find.byKey(DemoWidgetKeys.tokenSourceIssuerButton));
-      await _enterSmokeText(tester, find.byKey(DemoWidgetKeys.tokenIssuerBaseUrlField), payload.tokenIssuerBaseUrl);
-    case exampleSmokeTokenSourceOneTime:
-      await _selectTokenSource(tester, find.byKey(DemoWidgetKeys.tokenSourceOneTimeButton));
-      await _enterSmokeText(tester, find.byKey(DemoWidgetKeys.tokenField), payload.token);
-    default:
-      throw StateError('unsupported smoke token source ${payload.tokenSource}');
-  }
-}
-
-Future<void> _selectTokenSource(WidgetTester tester, Finder finder) async {
-  await tester.ensureVisible(finder);
-  await tester.pumpAndSettle();
-  await tester.tap(finder);
-  await tester.pumpAndSettle();
 }
 
 Future<void> _enterSmokeText(WidgetTester tester, Finder finder, String text) async {
